@@ -18,7 +18,7 @@ st.set_page_config(
     page_title="Daily — 생산성 대시보드",
     page_icon="◫",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 DEFAULT_DATA = {
@@ -61,37 +61,48 @@ data = st.session_state.data
 # ----------------------------- Styling -----------------------------
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800;900&display=swap');
     html, body, [class*="css"] { font-family: 'Noto Sans KR', sans-serif; }
-    .stApp { background: #f7f8fa; }
-    [data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid #e9edf2; }
-    .block-container { padding-top: 2rem; padding-bottom: 3rem; max-width: 1440px; }
-    h1, h2, h3 { letter-spacing: -0.04em; color: #172033; }
-    p, label, span { letter-spacing: -0.015em; }
-    div[data-testid="stMetric"] {
-        background: #ffffff; border: 1px solid #e9edf2; border-radius: 16px;
-        padding: 18px 20px; box-shadow: 0 2px 8px rgba(25,35,55,.025);
+    .stApp { background: #f5f7ff; color: #202944; }
+    .block-container { max-width: 1120px; padding: 1.2rem 1.35rem 3rem; }
+    h1,h2,h3 { color:#202944; letter-spacing:-.04em; font-weight:800; }
+    h1 { font-size:2rem !important; }
+    h2 { font-size:1.45rem !important; }
+    p, label, .stMarkdown { color:#34405a; }
+    [data-testid="stSidebar"] { background:#fff; }
+    .hero { background:linear-gradient(120deg,#e9f1ff,#f5eaff); border:1px solid #dce5ff; border-radius:22px; padding:24px; margin:8px 0 20px; }
+    .hero-kicker { color:#58698e; font-size:.9rem; font-weight:700; }
+    .hero-title { color:#202944; font-size:clamp(1.5rem,4vw,2.15rem); font-weight:900; margin:7px 0; line-height:1.3; }
+    .hero-sub { color:#53617d; font-size:1rem; line-height:1.6; }
+    .section-note,.small-muted { color:#687590; font-size:.95rem; line-height:1.6; }
+    div[data-testid="stMetric"] { background:#fff; border:1px solid #e4e9f5; border-radius:18px; padding:16px; box-shadow:0 3px 12px #27385b0a; }
+    div[data-testid="stMetricLabel"] { color:#66728d; font-size:.9rem; font-weight:700; }
+    div[data-testid="stMetricValue"] { color:#202944; font-weight:900; }
+    div[data-testid="stForm"], [data-testid="stExpander"] { background:#fff; border:1px solid #e4e9f5; border-radius:17px; }
+    div.stButton > button, div.stFormSubmitButton > button { min-height:46px; border-radius:13px; font-weight:800; border:1px solid #dce3f2; }
+    div.stButton > button[kind="primary"], div.stFormSubmitButton > button[kind="primary"] { background:#536dfe; border-color:#536dfe; }
+    input, textarea, [data-baseweb="select"] { border-radius:12px !important; }
+    [data-testid="stRadio"] label, [data-testid="stCheckbox"] label { font-weight:650; }
+    .task-done { color:#98a2b7; text-decoration:line-through; }
+    hr { border-color:#e3e8f2; }
+    @media (max-width: 700px) {
+      .block-container { padding: .7rem .75rem 2rem; }
+      h1 { font-size:1.55rem !important; }
+      h2 { font-size:1.2rem !important; }
+      .hero { padding:18px 16px; border-radius:17px; }
+      .hero-sub { font-size:.92rem; }
+      div[data-testid="stMetric"] { padding:12px 10px; border-radius:14px; }
+      div[data-testid="stMetricLabel"] { font-size:.78rem; }
+      div[data-testid="stMetricValue"] { font-size:1.35rem; }
+      div.stButton > button, div.stFormSubmitButton > button { min-height:48px; font-size:.95rem; }
+      [data-testid="stHorizontalBlock"] { flex-wrap:wrap; gap:.55rem !important; }
+      [data-testid="stHorizontalBlock"] > [data-testid="column"] { min-width: calc(50% - .3rem) !important; flex: 1 1 calc(50% - .3rem) !important; }
+      [data-testid="stDataFrame"] { overflow-x:auto; }
     }
-    div[data-testid="stMetricLabel"] { color: #758096; font-size: .86rem; }
-    div[data-testid="stMetricValue"] { color: #172033; font-weight: 750; }
-    .hero {
-        background: linear-gradient(115deg, #ffffff 0%, #f0f4ff 100%);
-        border: 1px solid #e6ebf5; border-radius: 20px; padding: 25px 28px;
-        margin-bottom: 22px;
+    @media (max-width: 430px) {
+      [data-testid="stHorizontalBlock"] > [data-testid="column"] { min-width:100% !important; flex:1 1 100% !important; }
+      div[data-testid="stMetric"] { padding:10px 12px; }
     }
-    .hero-kicker { color: #66728a; font-size: .83rem; font-weight: 600; }
-    .hero-title { color: #172033; font-size: 1.8rem; font-weight: 800; margin: 5px 0 3px; }
-    .hero-sub { color: #778197; font-size: .93rem; }
-    .section-note { color: #7b8496; font-size: .88rem; margin-top: -8px; }
-    .task-done { color: #929bad; text-decoration: line-through; }
-    .pill {
-        display: inline-block; border-radius: 999px; padding: 4px 9px;
-        font-size: .74rem; font-weight: 650; background: #eef2f8; color: #596579;
-    }
-    .small-muted { color: #8791a3; font-size: .82rem; }
-    div.stButton > button { border-radius: 10px; font-weight: 600; }
-    div[data-testid="stForm"] { background: #fff; border: 1px solid #e9edf2; border-radius: 14px; padding: 16px; }
-    hr { border-color: #e9edf2; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -146,37 +157,28 @@ today_events = sorted(
     key=lambda x: x.get("start", "")
 )
 
-# ----------------------------- Sidebar -----------------------------
-with st.sidebar:
-    st.markdown("## ◫ Daily")
-    st.caption("나만의 생산성 워크스페이스")
-    page = st.radio(
-        "메뉴",
-        ["대시보드", "할 일 관리", "일정 관리", "집중 타이머", "통계"],
-        label_visibility="collapsed",
-    )
-    st.divider()
-    st.markdown("**오늘의 요약**")
-    st.metric("남은 할 일", f"{len(open_tasks)}개")
-    st.metric("오늘 일정", f"{len(today_events)}개")
-    st.caption("기록은 현재 앱의 데이터 파일에 저장됩니다.")
-    if st.button("데이터 백업 파일 다운로드", use_container_width=True):
-        backup = json.dumps(data, ensure_ascii=False, indent=2)
-        st.download_button(
-            "JSON 백업 다운로드",
-            data=backup,
-            file_name=f"daily_backup_{today.isoformat()}.json",
-            mime="application/json",
-            use_container_width=True,
-        )
+# ----------------------------- 상단 메뉴 -----------------------------
+st.markdown("<div style='font-size:1.65rem;font-weight:900;color:#263451;'>🌈 Daily <span style='font-size:.9rem;font-weight:600;color:#77839b;'>쉽고 편한 나의 하루 관리</span></div>", unsafe_allow_html=True)
+page = st.radio(
+    "메뉴",
+    ["🏠 홈", "📝 할 일", "📅 일정", "⏱️ 집중", "🏆 통계"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="main_navigation",
+)
+page = {"🏠 홈":"대시보드", "📝 할 일":"할 일 관리", "📅 일정":"일정 관리", "⏱️ 집중":"집중 타이머", "🏆 통계":"통계"}[page]
+with st.expander("⚙️ 데이터 백업 / 저장 안내"):
+    st.caption("내 기록은 앱 폴더의 productivity_data.json 파일에 저장됩니다. 다른 곳에 보관하려면 아래 백업을 내려받으세요.")
+    backup = json.dumps(data, ensure_ascii=False, indent=2)
+    st.download_button("⬇️ 내 데이터 백업하기", data=backup, file_name=f"daily_backup_{today.isoformat()}.json", mime="application/json", use_container_width=True)
 
 # ----------------------------- Dashboard -----------------------------
 if page == "대시보드":
     st.markdown(f"""
     <div class="hero">
       <div class="hero-kicker">{today.strftime('%Y년 %m월 %d일')} · DAILY OVERVIEW</div>
-      <div class="hero-title">오늘도 차근차근, 하나씩.</div>
-      <div class="hero-sub">해야 할 일과 일정을 정리하고, 중요한 일에 집중해 보세요.</div>
+      <div class="hero-title">오늘 할 일, 하나씩 끝내봐요!</div>
+      <div class="hero-sub">할 일을 적고, 일정을 확인하고, 집중 시간을 모아봐요.</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -192,7 +194,7 @@ if page == "대시보드":
 
     left, right = st.columns([1.15, 1])
     with left:
-        st.subheader("오늘의 할 일")
+        st.subheader("📝 오늘 해야 할 일")
         if not today_tasks:
             st.info("오늘 마감인 할 일이 없습니다. 할 일 관리에서 새 업무를 추가해 보세요.")
         else:
@@ -210,7 +212,7 @@ if page == "대시보드":
                     unsafe_allow_html=True,
                 )
                 row[2].caption(task.get("priority", "보통"))
-        st.subheader("다가오는 일정")
+        st.subheader("📅 다가오는 일정")
         upcoming = sorted(
             [e for e in events if parse_date(e.get("date")) >= today],
             key=lambda x: (x.get("date", ""), x.get("start", ""))
@@ -222,7 +224,7 @@ if page == "대시보드":
                 f"**{event['date']}** · {event['start']}  {event['title']}"
             )
     with right:
-        st.subheader("이번 주 진행 상황")
+        st.subheader("📈 이번 주 진행 상황")
         week_start = today - timedelta(days=today.weekday())
         week_days = [(week_start + timedelta(days=i)) for i in range(7)]
         week_data = []
@@ -241,12 +243,12 @@ if page == "대시보드":
         st.caption(f"{len(today_done)} / {total_today}개 완료")
 
     st.divider()
-    st.subheader("빠른 추가")
+    st.subheader("➕ 할 일 빠르게 추가")
     with st.form("quick_task_form", clear_on_submit=True):
         q1, q2, q3 = st.columns([2, 1, 1])
         quick_title = q1.text_input("새 할 일", placeholder="예: 수행평가 자료 정리")
-        quick_due = q2.date_input("마감일", value=today)
-        quick_priority = q3.selectbox("우선순위", ["높음", "보통", "낮음"])
+        quick_due = q2.date_input("언제까지 할까요?", value=today)
+        quick_priority = q3.selectbox("중요도", ["높음", "보통", "낮음"])
         submitted = st.form_submit_button("할 일 추가", use_container_width=True)
         if submitted:
             if quick_title.strip():
@@ -258,17 +260,17 @@ if page == "대시보드":
 
 # ----------------------------- Tasks -----------------------------
 elif page == "할 일 관리":
-    st.title("할 일 관리")
-    st.markdown("<div class='section-note'>해야 할 일을 등록하고 진행 상황을 관리하세요.</div>", unsafe_allow_html=True)
-    with st.expander("＋ 새 할 일 추가", expanded=not bool(tasks)):
+    st.title("📝 할 일 관리")
+    st.markdown("<div class='section-note'>해야 할 일을 적고, 끝낸 일은 체크해 보세요!</div>", unsafe_allow_html=True)
+    with st.expander("➕ 새 할 일 추가하기", expanded=not bool(tasks)):
         with st.form("add_task_form", clear_on_submit=True):
-            title = st.text_input("할 일 제목", placeholder="예: 영어 단어 30개 외우기")
+            title = st.text_input("무엇을 할까요?", placeholder="예: 영어 단어 30개 외우기")
             a, b, c = st.columns(3)
-            due = a.date_input("마감일", value=today)
-            priority = b.selectbox("우선순위", ["높음", "보통", "낮음"])
-            category = c.selectbox("분류", ["공부", "업무", "개인", "기타"])
+            due = a.date_input("언제까지 할까요?", value=today)
+            priority = b.selectbox("중요도", ["높음", "보통", "낮음"])
+            category = c.selectbox("종류", ["공부", "업무", "개인", "기타"])
             memo = st.text_area("메모 (선택)", placeholder="세부 내용이나 참고 사항")
-            submitted = st.form_submit_button("등록하기", use_container_width=True)
+            submitted = st.form_submit_button("✅ 할 일 저장하기", use_container_width=True)
             if submitted:
                 if title.strip():
                     add_task(title, due, priority, category, memo)
@@ -307,17 +309,17 @@ elif page == "할 일 관리":
 
 # ----------------------------- Calendar / Events -----------------------------
 elif page == "일정 관리":
-    st.title("일정 관리")
-    st.markdown("<div class='section-note'>약속, 수업, 마감 일정 등을 한곳에서 관리하세요.</div>", unsafe_allow_html=True)
-    with st.expander("＋ 새 일정 추가", expanded=not bool(events)):
+    st.title("📅 일정 관리")
+    st.markdown("<div class='section-note'>약속이나 수업, 중요한 날짜를 잊지 않도록 적어두세요!</div>", unsafe_allow_html=True)
+    with st.expander("➕ 새 일정 추가하기", expanded=not bool(events)):
         with st.form("add_event_form", clear_on_submit=True):
-            event_title = st.text_input("일정 이름", placeholder="예: 프로젝트 회의")
+            event_title = st.text_input("무슨 일정인가요?", placeholder="예: 프로젝트 회의")
             a, b, c = st.columns(3)
             event_date = a.date_input("날짜", value=today)
             start_time = b.time_input("시작 시간", value=datetime.now().replace(hour=9, minute=0).time())
             end_time = c.time_input("종료 시간", value=datetime.now().replace(hour=10, minute=0).time())
             event_memo = st.text_area("메모 (선택)")
-            submitted = st.form_submit_button("일정 등록", use_container_width=True)
+            submitted = st.form_submit_button("✅ 일정 저장하기", use_container_width=True)
             if submitted:
                 if not event_title.strip():
                     st.warning("일정 이름을 입력해 주세요.")
@@ -349,8 +351,8 @@ elif page == "일정 관리":
 
 # ----------------------------- Focus timer -----------------------------
 elif page == "집중 타이머":
-    st.title("집중 타이머")
-    st.markdown("<div class='section-note'>정해진 시간 동안 한 가지 일에 집중해 보세요.</div>", unsafe_allow_html=True)
+    st.title("⏱️ 집중 타이머")
+    st.markdown("<div class='section-note'>⏳ 정해진 시간 동안 한 가지 일만 해봐요. 끝나면 기록이 자동으로 쌓여요!</div>", unsafe_allow_html=True)
     c1, c2 = st.columns([1, 1])
     with c1:
         mode = st.radio("타이머 모드", ["집중", "짧은 휴식", "긴 휴식"], horizontal=True)
@@ -362,20 +364,20 @@ elif page == "집중 타이머":
         else:
             st.session_state.timer_mode = mode
         start_col, pause_col, reset_col = st.columns(3)
-        if start_col.button("시작 / 재개", use_container_width=True, type="primary"):
+        if start_col.button("▶️ 시작하기", use_container_width=True, type="primary"):
             if not st.session_state.timer_running:
                 if st.session_state.timer_end is None:
                     st.session_state.timer_total = int(minutes) * 60
                 st.session_state.timer_end = time.time() + st.session_state.timer_total
                 st.session_state.timer_running = True
                 st.rerun()
-        if pause_col.button("일시정지", use_container_width=True):
+        if pause_col.button("⏸️ 잠깐 멈추기", use_container_width=True):
             if st.session_state.timer_running:
                 st.session_state.timer_total = max(0, int(st.session_state.timer_end - time.time()))
                 st.session_state.timer_running = False
                 st.session_state.timer_end = None
                 st.rerun()
-        if reset_col.button("초기화", use_container_width=True):
+        if reset_col.button("🔄 처음부터", use_container_width=True):
             st.session_state.timer_running = False
             st.session_state.timer_end = None
             st.session_state.timer_total = int(minutes) * 60
@@ -416,8 +418,8 @@ elif page == "집중 타이머":
 
 # ----------------------------- Statistics -----------------------------
 elif page == "통계":
-    st.title("통계")
-    st.markdown("<div class='section-note'>기록을 바탕으로 나의 생산성 흐름을 확인하세요.</div>", unsafe_allow_html=True)
+    st.title("🏆 나의 기록")
+    st.markdown("<div class='section-note'>내가 얼마나 해냈는지 그래프로 확인해 봐요!</div>", unsafe_allow_html=True)
     start = today - timedelta(days=6)
     last7 = [(start + timedelta(days=i)) for i in range(7)]
     completed_by_day = []
@@ -459,4 +461,4 @@ elif page == "통계":
     else:
         st.info("아직 집중 기록이 없습니다. 집중 타이머를 사용해 보세요.")
 
-st.sidebar.caption("Daily Productivity · v1.0")
+st.caption("🌱 작은 실천이 모여 큰 변화가 돼요. · Daily")
