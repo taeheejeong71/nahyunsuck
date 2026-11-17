@@ -90,33 +90,49 @@ def chart(frame, kind="category"):
     if frame.empty:
         st.info("아직 기록이 없습니다.")
         return
-    if kind == "category":
-        grouped = frame.groupby("category", as_index=False)["amount"].sum().sort_values("amount")
-        fig = px.bar(grouped, x="amount", y="category", orientation="h", color="category", color_discrete_map=COLORS,
-                     labels={"amount": "금액(원)", "category": "종류"})
-        fig.update_traces(hovertemplate="%{y} · %{x:,.0f}원<extra></extra>")
-        fig.update_xaxes(rangemode="tozero")
-    else:
-        grouped = frame.assign(month=pd.to_datetime(frame["spent_on"]).dt.strftime("%Y-%m")).groupby("month", as_index=False)["amount"].sum()
-        fig = px.bar(grouped, x="month", y="amount", color_discrete_sequence=["#1751D0"], labels={"month": "월", "amount": "금액(원)"})
-        fig.update_xaxes(type="category")
-        fig.update_yaxes(rangemode="tozero")
-        fig.update_traces(hovertemplate="%{x} · %{y:,.0f}원<extra></extra>")
-    fig.update_layout(height=245, margin=dict(t=5, b=8, l=0, r=4), showlegend=False,
-                      paper_bgcolor="#FDFDFF", plot_bgcolor="#FDFDFF", font=dict(color="#1E2433", size=12), dragmode=False)
-    fig.update_xaxes(gridcolor="#E2E6F0", fixedrange=True)
-    fig.update_yaxes(gridcolor="#E2E6F0", fixedrange=True)
+    if kind != "category":
+        monthly = frame.assign(month=pd.to_datetime(frame["spent_on"]).dt.strftime("%Y-%m")).groupby("month")["amount"].sum()
+        st.dataframe(monthly.rename_axis("월").reset_index(name="금액(원)"), hide_index=True, use_container_width=True, height=245)
+        return
+    totals = frame.groupby("category", as_index=False)["amount"].sum().sort_values("amount", ascending=False)
+    total = int(totals["amount"].sum())
+    if total <= 0:
+        st.info("표시할 지출 금액이 없습니다.")
+        return
+    pieces = totals.copy()
+    palette = COLORS.copy()
+    if len(pieces) > 3:
+        pieces = pd.concat([pieces.head(2), pd.DataFrame([{"category": "나머지 합계", "amount": int(pieces.iloc[2:]["amount"].sum())}])], ignore_index=True)
+        palette["나머지 합계"] = "#9117D0"
+    fig = px.pie(pieces, names="category", values="amount", hole=.56,
+                 color="category", color_discrete_map=palette)
+    fig.update_traces(textinfo="none", sort=False,
+                      marker=dict(line=dict(color="#FDFDFF", width=2)),
+                      hovertemplate="%{label}<br>%{value:,.0f}원 · %{percent}<extra></extra>")
+    fig.update_layout(height=205, margin=dict(t=8, b=8, l=8, r=8), showlegend=False,
+                      paper_bgcolor="#FDFDFF", plot_bgcolor="#FDFDFF",
+                      font=dict(color="#1E2433", size=14),
+                      annotations=[dict(text="총지출", x=.5, y=.5, showarrow=False, font=dict(size=16, color="#1E2433"))])
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+    rows = []
+    for row in pieces.itertuples():
+        rows.append(f'<div class="pie-row"><span class="pie-name"><i style="background:{palette.get(row.category, "#9117D0")}"></i>{esc(row.category)}</span><strong>{money(row.amount)}</strong><span>{row.amount/total:.1%}</span></div>')
+    st.markdown('<div class="pie-legend">'+''.join(rows)+'</div>', unsafe_allow_html=True)
+    if len(totals) > 3:
+        with st.expander("나머지 종류별 금액 보기"):
+            st.dataframe(totals.iloc[2:].rename(columns={"category":"종류", "amount":"금액(원)"}), hide_index=True, use_container_width=True, height=210)
+
 
 
 st.markdown('''<style>
 .stApp { background:#F7F8FA; color:#1E2433; }
-.block-container { max-width:1140px; padding:1.3rem 2rem 1rem; }
+.block-container { max-width:1140px; padding:4.5rem 2rem 1rem; }
 h1,h2,h3 { color:#1E2433; letter-spacing:-.04em; }
-h1 { font-size:28px !important; padding:0 !important; margin:0 0 4px !important; }
+h1 { font-size:28px !important; padding:.15rem 0 .35rem !important; margin:0 0 4px !important; line-height:1.4 !important; overflow:visible !important; }
 h3 { font-size:17px !important; padding:0 !important; margin:0 0 12px !important; }
 [data-testid="stSidebar"] { background:#FDFDFF; border-right:1px solid #E2E6F0; min-width:230px; max-width:270px; }
 [data-testid="stSidebar"] .block-container { padding:1rem; }
+[data-testid="stSidebarUserContent"] { padding-top:2rem !important; }
 [data-testid="stSidebar"] [data-testid="stButton"] button { width:100%; min-height:62px; margin:3px 0; padding:14px 18px; justify-content:flex-start; border:0; border-radius:12px; }
 [data-testid="stSidebar"] [data-testid="stButton"] button p { font-size:17px; font-weight:700; }
 [data-testid="stSidebar"] button[kind="secondary"] { background:#F2F4F7; color:#303B50; }
@@ -138,8 +154,14 @@ input,textarea { font-size:16px !important; color:#1E2433 !important; -webkit-te
 [data-baseweb="input"],[data-baseweb="textarea"],[data-baseweb="select"] > div { background:#FDFDFF !important; color:#1E2433 !important; }
 [data-testid="stHeader"] { background:#F7F8FA; }
 [data-testid="stCaptionContainer"] { color:#505A74; }
+.pie-legend { background:#FDFDFF; border-radius:12px; padding:4px 12px; }
+.pie-row { display:grid; grid-template-columns:minmax(0,1fr) auto 60px; gap:10px; align-items:center; min-height:42px; color:#1E2433; font-size:14px; }
+.pie-row > span:last-child { text-align:right; color:#505A74; font-variant-numeric:tabular-nums; }
+.pie-row strong { font-size:14px; font-variant-numeric:tabular-nums; }
+.pie-name { display:flex; gap:8px; align-items:center; overflow-wrap:anywhere; }
+.pie-name i { display:block; width:10px; height:10px; border-radius:50%; flex-shrink:0; }
 @media(max-width:640px) {
- .block-container { padding:1rem .9rem; }
+ .block-container { padding:4.25rem .9rem 1rem; }
  h1 { font-size:23px !important; }
  .stats { gap:6px; margin:10px 0 14px; }
  .stats > div { padding:12px 8px; border-radius:10px; }
@@ -262,9 +284,6 @@ else:
     elif analysis_mode == "월별 지출":
         chart(df, kind="monthly")
         st.caption("이번 달은 오늘까지의 기록입니다. 기록이 없는 달은 생략합니다.")
-        with st.expander("금액 표 보기"):
-            monthly = df.assign(month=pd.to_datetime(df["spent_on"]).dt.strftime("%Y-%m")).groupby("month")["amount"].sum()
-            st.dataframe(monthly.rename_axis("월").reset_index(name="금액(원)"), hide_index=True, use_container_width=True, height=230)
     else:
         monthly = df.assign(month=pd.to_datetime(df["spent_on"]).dt.strftime("%Y-%m")).groupby("month")["amount"].sum()
         previous = pd.Period(current_month, freq="M") - 1
