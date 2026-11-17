@@ -100,11 +100,56 @@ st.markdown(
         padding: 18px;
     }
     section[data-testid="stSidebar"] { background: #FFFFFF; }
-    @media (max-width: 640px) {
-        .block-container { padding: 1rem .85rem 2rem .85rem; }
-        .hero { padding: 20px 18px; border-radius: 17px; }
-        div[data-testid="stMetric"] { padding: 12px; }
-        [data-testid="stDataFrame"] { font-size: 12px; }
+    /* 모바일: 손가락으로 누르기 쉽고 화면을 덜 답답하게 */
+    button, [role="button"] { touch-action: manipulation; }
+    @media (max-width: 768px) {
+        .block-container { padding: .8rem .7rem 2.5rem .7rem; max-width: 100%; }
+        .hero { padding: 21px 17px; border-radius: 17px; margin-bottom: 14px; }
+        .hero p { font-size: .95rem; line-height: 1.5; }
+        h1 { font-size: 1.65rem !important; }
+        h2 { font-size: 1.35rem !important; }
+        h3 { font-size: 1.15rem !important; }
+
+        /* 좁은 화면에서는 두 칸 영역을 세로로 배치 */
+        div[data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap !important;
+            gap: .65rem !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+            flex: 1 1 100% !important;
+            min-width: 100% !important;
+        }
+
+        /* 탭은 가로로 넘겨 볼 수 있게 */
+        div[data-testid="stTabs"] [role="tablist"] {
+            gap: 5px; overflow-x: auto; flex-wrap: nowrap;
+            scrollbar-width: thin; padding-bottom: 5px;
+        }
+        div[data-testid="stTabs"] button[role="tab"] {
+            min-height: 48px; min-width: max-content;
+            padding: 10px 13px; font-size: 14px;
+        }
+
+        /* 버튼과 입력창 터치 영역 확대 */
+        div.stButton > button,
+        div[data-testid="stFormSubmitButton"] > button {
+            min-height: 54px !important; width: 100%;
+            border-radius: 14px; font-size: 16px !important;
+            font-weight: 800; padding: 12px 16px;
+        }
+        input, textarea, [data-baseweb="select"] > div {
+            min-height: 49px !important; font-size: 16px !important;
+        }
+        div[data-testid="stNumberInput"] button,
+        div[data-testid="stDateInput"] button {
+            min-width: 46px !important; min-height: 46px !important;
+        }
+        label, [data-testid="stWidgetLabel"] {
+            font-size: 15px !important; font-weight: 700 !important;
+        }
+        div[data-testid="stMetric"] { padding: 14px; border-radius: 15px; }
+        [data-testid="stDataFrame"] { font-size: 12px; overflow-x: auto; }
+        div[data-testid="stExpander"] summary { min-height: 52px; align-items: center; }
     }
     </style>
     """,
