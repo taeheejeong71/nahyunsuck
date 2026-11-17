@@ -1,348 +1,334 @@
+import html
 import sqlite3
-from datetime import date, datetime
+from contextlib import closing
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-# ------------------------------------------------------------
-# 기본 설정
-# ------------------------------------------------------------
-st.set_page_config(
-    page_title="내 용돈 연구소",
-    page_icon="💰",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
-
-DB_PATH = Path(__file__).with_name("expenses.db")
+st.set_page_config(page_title="내 용돈 연구소", page_icon="🌱", layout="wide", initial_sidebar_state="collapsed")
+ROOT = Path(__file__).resolve().parent
+DB_PATH = ROOT / "expenses.db"
 CATEGORIES = ["식비", "간식", "교통", "쇼핑", "문화·취미", "학용품", "기타"]
-COLORS = {
-    "식비": "#FF9F68",
-    "간식": "#FFD166",
-    "교통": "#6C9EFF",
-    "쇼핑": "#B69CFF",
-    "문화·취미": "#62CDB5",
-    "학용품": "#F28FB3",
-    "기타": "#AAB4C3",
-}
+ICONS = dict(zip(CATEGORIES, ["🍚", "🍪", "🚌", "🛍️", "🎧", "📒", "🧩"]))
+COLORS = dict(zip(CATEGORIES, ["#1751D0", "#E2661E", "#0E9E8F", "#C08A00", "#D95D8F", "#2E7D32", "#9117D0"]))
+NAV = ["홈", "기록하기", "기록장", "분석"]
 
 
-def get_connection():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS expenses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            spent_on TEXT NOT NULL,
-            item TEXT NOT NULL,
-            category TEXT NOT NULL,
-            amount INTEGER NOT NULL CHECK(amount > 0),
-            memo TEXT DEFAULT ''
-        )
-        """
-    )
-    conn.commit()
-    return conn
-
-
-def load_data():
-    with get_connection() as conn:
-        df = pd.read_sql_query(
-            "SELECT id, spent_on, item, category, amount, memo FROM expenses ORDER BY spent_on DESC, id DESC",
-            conn,
-        )
-    if not df.empty:
-        df["spent_on"] = pd.to_datetime(df["spent_on"]).dt.date
-        df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0).astype(int)
-    return df
+def esc(value):
+    return html.escape(str(value), quote=True)
 
 
 def money(value):
     return f"{int(value):,}원"
 
 
-def month_start(d):
-    return d.replace(day=1)
+def get_connection():
+    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn.execute("""CREATE TABLE IF NOT EXISTS expenses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, spent_on TEXT NOT NULL,
+        item TEXT NOT NULL, category TEXT NOT NULL,
+        amount INTEGER NOT NULL CHECK(amount > 0), memo TEXT DEFAULT '')""")
+    conn.commit()
+    return conn
 
 
-# ------------------------------------------------------------
-# 보기 쉬운 화면 디자인
-# ------------------------------------------------------------
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
-    html, body, [class*="css"] { font-family: 'Noto Sans KR', sans-serif; }
-    .stApp { background: #F5F7FB; }
-    .block-container { max-width: 1120px; padding-top: 1.4rem; padding-bottom: 3rem; }
-    h1, h2, h3 { color: #17233B; letter-spacing: -0.04em; }
-    .hero {
-        background: linear-gradient(120deg, #355CDE, #6B83F2);
-        color: white; padding: 25px 27px; border-radius: 22px;
-        margin-bottom: 18px;
-    }
-    .hero h1 { color: white; font-size: clamp(1.65rem, 4vw, 2.35rem); margin: 0 0 7px 0; }
-    .hero p { color: #EEF1FF; margin: 0; font-size: 1rem; }
-    .small-note { color: #65718A; font-size: .9rem; }
-    div[data-testid="stMetric"] {
-        background: white; padding: 17px 18px; border: 1px solid #E7EBF3;
-        border-radius: 17px; box-shadow: 0 3px 12px rgba(30,50,90,.04);
-    }
-    div[data-testid="stMetricLabel"] { color: #66728A; }
-    div[data-testid="stMetricValue"] { color: #17233B; }
-    div.stButton > button {
-        border-radius: 12px; min-height: 2.8rem; font-weight: 700;
-    }
-    div[data-testid="stForm"] {
-        background: white; border: 1px solid #E7EBF3; border-radius: 18px;
-        padding: 18px;
-    }
-    section[data-testid="stSidebar"] { background: #FFFFFF; }
-    /* 모바일: 손가락으로 누르기 쉽고 화면을 덜 답답하게 */
-    button, [role="button"] { touch-action: manipulation; }
-    @media (max-width: 768px) {
-        .block-container { padding: .8rem .7rem 2.5rem .7rem; max-width: 100%; }
-        .hero { padding: 21px 17px; border-radius: 17px; margin-bottom: 14px; }
-        .hero p { font-size: .95rem; line-height: 1.5; }
-        h1 { font-size: 1.65rem !important; }
-        h2 { font-size: 1.35rem !important; }
-        h3 { font-size: 1.15rem !important; }
+def load_data():
+    with closing(get_connection()) as conn:
+        frame = pd.read_sql_query("SELECT id, spent_on, item, category, amount, memo FROM expenses ORDER BY spent_on DESC, id DESC", conn)
+    frame["spent_on"] = pd.to_datetime(frame["spent_on"], errors="coerce").dt.date
+    frame["amount"] = pd.to_numeric(frame["amount"], errors="coerce").fillna(0).astype(int)
+    return frame
 
-        /* 좁은 화면에서는 두 칸 영역을 세로로 배치 */
-        div[data-testid="stHorizontalBlock"] {
-            flex-wrap: wrap !important;
-            gap: .65rem !important;
-        }
-        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
-            flex: 1 1 100% !important;
-            min-width: 100% !important;
-        }
 
-        /* 탭은 가로로 넘겨 볼 수 있게 */
-        div[data-testid="stTabs"] [role="tablist"] {
-            gap: 5px; overflow-x: auto; flex-wrap: nowrap;
-            scrollbar-width: thin; padding-bottom: 5px;
-        }
-        div[data-testid="stTabs"] button[role="tab"] {
-            min-height: 48px; min-width: max-content;
-            padding: 10px 13px; font-size: 14px;
-        }
+def add_expense(spent_on, item, category, amount, memo):
+    with closing(get_connection()) as conn:
+        with conn:
+            conn.execute("INSERT INTO expenses (spent_on,item,category,amount,memo) VALUES (?,?,?,?,?)",
+                         (spent_on.isoformat(), item.strip(), category, int(amount), memo.strip()))
 
-        /* 버튼과 입력창 터치 영역 확대 */
-        div.stButton > button,
-        div[data-testid="stFormSubmitButton"] > button {
-            min-height: 54px !important; width: 100%;
-            border-radius: 14px; font-size: 16px !important;
-            font-weight: 800; padding: 12px 16px;
-        }
-        input, textarea, [data-baseweb="select"] > div {
-            min-height: 49px !important; font-size: 16px !important;
-        }
-        div[data-testid="stNumberInput"] button,
-        div[data-testid="stDateInput"] button {
-            min-width: 46px !important; min-height: 46px !important;
-        }
-        label, [data-testid="stWidgetLabel"] {
-            font-size: 15px !important; font-weight: 700 !important;
-        }
-        div[data-testid="stMetric"] { padding: 14px; border-radius: 15px; }
-        [data-testid="stDataFrame"] { font-size: 12px; overflow-x: auto; }
-        div[data-testid="stExpander"] summary { min-height: 52px; align-items: center; }
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
 
-st.markdown(
-    """
-    <div class="hero">
-      <h1>💰 내 용돈 연구소</h1>
-      <p>돈을 어디에 썼는지 기록하고, 다음 달 지출도 미리 살펴봐요!</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+def delete_expense(record_id):
+    with closing(get_connection()) as conn:
+        with conn:
+            conn.execute("DELETE FROM expenses WHERE id = ?", (int(record_id),))
 
-df = load_data()
+
+def hero_image():
+    # Embedded illustration: no asset folder required.
+    return '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'
+
+
+def heading(kicker, title, text=""):
+    st.markdown(f'<div class="section-title"><span>{esc(kicker)}</span><h2>{esc(title)}</h2><p>{esc(text)}</p></div>', unsafe_allow_html=True)
+
+
+def empty_state(title="아직 기록이 없어요", text="작은 지출 하나부터 시작해 보세요. 나의 소비 습관이 보이기 시작해요."):
+    st.markdown(f'<div class="empty"><div class="empty-icon">🌱</div><h3>{esc(title)}</h3><p>{esc(text)}</p></div>', unsafe_allow_html=True)
+
+
+def record_cards(frame):
+    for row in frame.itertuples():
+        memo = f'<div class="record-memo">{esc(row.memo)}</div>' if row.memo else ""
+        st.markdown(f'<div class="record"><div class="record-icon">{ICONS.get(row.category, "🧩")}</div><div class="record-info"><strong>{esc(row.item)}</strong><div class="record-meta">{esc(row.spent_on)} · {esc(row.category)}</div>{memo}</div><div class="record-amount">{money(row.amount)}</div></div>', unsafe_allow_html=True)
+
+
+def chart_style(fig, height=300):
+    fig.update_layout(height=height, margin=dict(t=12, b=16, l=0, r=12),
+                      paper_bgcolor="#FDFDFF", plot_bgcolor="#FDFDFF",
+                      font=dict(family="sans-serif", color="#1E2433", size=12),
+                      showlegend=False, dragmode=False)
+    fig.update_xaxes(gridcolor="#E2E6F0", zeroline=False, fixedrange=True)
+    fig.update_yaxes(gridcolor="#E2E6F0", zeroline=False, fixedrange=True)
+    return fig
+
+
+def category_chart(frame):
+    totals = frame.groupby("category", as_index=False)["amount"].sum().sort_values("amount")
+    fig = px.bar(totals, x="amount", y="category", orientation="h", color="category",
+                 color_discrete_map=COLORS, labels={"amount": "지출 (원)", "category": "종류"})
+    fig.update_traces(hovertemplate="%{y}<br>%{x:,.0f}원<extra></extra>")
+    fig.update_xaxes(rangemode="tozero")
+    st.plotly_chart(chart_style(fig, max(240, len(totals) * 38 + 60)), use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+    with st.expander("정확한 금액 보기"):
+        table = totals.sort_values("amount", ascending=False).rename(columns={"category": "종류", "amount": "금액(원)"})
+        st.dataframe(table, hide_index=True, use_container_width=True)
+
+
+st.markdown("""<style>
+:root { --primary-color:#21634E; --ink:#1E2433; --muted:#586579; --line:#E5EBE8; --green:#21634E; }
+html, body, [data-testid="stApp"] { font-family: -apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Malgun Gothic',sans-serif; }
+.stApp { background:#F6F8F5; color:var(--ink); color-scheme:light; }
+[data-testid="stAppViewContainer"] { background:#F6F8F5; color:#1E2433; }
+[data-testid="stHeader"] { background:#F6F8F5; }
+[data-testid="stWidgetLabel"], [data-testid="stMarkdownContainer"] { color:inherit; }
+[data-baseweb="input"], [data-baseweb="textarea"], [data-baseweb="select"] > div { background:#FDFDFF !important; color:#1E2433 !important; }
+input, textarea { color:#1E2433 !important; -webkit-text-fill-color:#1E2433 !important; }
+button[kind="primaryFormSubmit"], button[kind="primary"] { background:#21634E !important; border-color:#21634E !important; color:white !important; }
+[data-testid="stRadio"] div[role="radiogroup"] { color:#1E2433; }
+[data-testid="stForm"] { color:#1E2433; }
+.block-container { max-width:1120px; padding:2rem 2rem 3rem; }
+h1,h2,h3 { letter-spacing:-.045em; color:var(--ink); }
+.brand { display:flex; align-items:center; gap:10px; margin:4px 0 22px; font-size:19px; font-weight:800; }
+.brand small { font-size:11px; letter-spacing:.12em; color:var(--muted); margin-left:auto; font-weight:600; }
+.hero { border:1px solid #E6EADD; background:#F6F1E6; border-radius:26px; padding:36px; display:grid; grid-template-columns:1.2fr 1fr; align-items:center; overflow:hidden; margin:18px 0 25px; }
+.hero-copy { z-index:1; }
+.eyebrow { display:inline-block; font-size:12px; font-weight:800; letter-spacing:.08em; color:#365D4E; margin-bottom:12px; }
+.hero h1 { font-size:clamp(26px,3.4vw,40px); line-height:1.3; margin:0 0 12px; padding:0; }
+.hero p { color:#586052; font-size:14px; line-height:1.8; margin:0; }
+.hero img { width:100%; border-radius:20px; mix-blend-mode:multiply; }
+.section-title { margin:24px 0 14px; }
+.section-title > span { font-size:11px; letter-spacing:.12em; font-weight:800; color:#21634E; }
+.section-title h2 { font-size:23px; margin:5px 0; padding:0; }
+.section-title p { color:var(--muted); font-size:14px; margin:6px 0 0; }
+.stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:16px 0 22px; }
+.stat { background:#FDFDFF; border:1px solid var(--line); padding:22px; border-radius:20px; min-width:0; }
+.stat:first-child { background:#21634E; color:#FFF; border-color:#21634E; }
+.stat-label { font-size:13px; opacity:.9; }
+.stat-value { font-size:clamp(21px,3vw,30px); font-weight:800; letter-spacing:-.04em; margin-top:12px; overflow-wrap:anywhere; }
+.stat-note { font-size:11px; margin-top:6px; opacity:.85; }
+.record { display:flex; gap:12px; align-items:center; padding:17px 2px; border-bottom:1px solid var(--line); }
+.record-icon { width:44px; height:44px; display:grid; place-items:center; flex-shrink:0; background:#EDF3EE; border-radius:14px; font-size:21px; }
+.record-info { flex:1; min-width:0; }
+.record-info strong { display:block; font-size:15px; overflow-wrap:anywhere; }
+.record-meta,.record-memo { color:var(--muted); font-size:12px; margin-top:4px; overflow-wrap:anywhere; }
+.record-amount { font-weight:800; font-size:15px; white-space:nowrap; }
+.empty { padding:30px 20px; text-align:center; background:#FDFDFF; border:1px dashed #CBD9CD; border-radius:20px; }
+.empty-icon { font-size:40px; }
+.empty h3 { font-size:18px; margin:12px 0 5px; }
+.empty p { color:var(--muted); font-size:14px; }
+.tip { padding:18px 20px; background:#EAF2EB; border-radius:16px; color:#254D3C; font-size:14px; line-height:1.8; margin:12px 0; }
+[data-testid="stForm"], [data-testid="stVerticalBlockBorderWrapper"] > div { border-radius:20px; }
+[data-testid="stForm"] { background:#FDFDFF; border:1px solid var(--line); padding:24px; }
+[data-testid="stRadio"] > div[role="radiogroup"] { display:flex; flex-wrap:nowrap; gap:6px; background:#E9EFEB; padding:6px; border-radius:16px; }
+[data-testid="stRadio"] div[role="radiogroup"] > label { flex:1; min-width:0; margin:0; justify-content:center; border-radius:12px; padding:12px 6px; cursor:pointer; }
+[data-testid="stRadio"] div[role="radiogroup"] > label:has(input:checked) { background:#FDFDFF; box-shadow:0 2px 5px #163D2710; }
+[data-testid="stRadio"] div[role="radiogroup"] > label > div:first-child { display:none; }
+[data-testid="stRadio"] div[role="radiogroup"] p { font-size:14px; font-weight:700; white-space:nowrap; }
+button, [role="button"] { touch-action:manipulation; }
+[data-testid="stButton"] button, [data-testid="stFormSubmitButton"] button, [data-testid="stDownloadButton"] button { border-radius:12px; min-height:48px; font-weight:700; }
+input, textarea { font-size:16px !important; }
+[data-testid="stTextInput"] input, [data-testid="stNumberInput"] input { min-height:46px; }
+[data-testid="stSelectbox"] [data-baseweb="select"] > div { min-height:48px; }
+[data-testid="stSpinner"] { padding:16px; background:#EAF2EB; border-radius:12px; }
+.footer { margin-top:36px; padding-top:18px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; line-height:1.8; }
+@media(max-width:640px) {
+ .block-container { padding:1rem 1rem 2rem; }
+ .brand { font-size:17px; margin-bottom:16px; } .brand small { font-size:9px; }
+ .hero { padding:22px; grid-template-columns:1fr; border-radius:21px; margin-top:16px; gap:4px; }
+ .hero img { max-height:145px; width:100%; object-fit:cover; object-position:65% 53%; }
+ .hero h1 { font-size:27px; } .hero p { font-size:13px; }
+ .stats { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+ .stat { padding:16px; border-radius:16px; } .stat:first-child { grid-column:1/-1; }
+ .stat:first-child .stat-value { font-size:34px; } .stat-value { font-size:22px; }
+ .section-title h2 { font-size:21px; }
+ [data-testid="stForm"] { padding:16px; }
+ [data-testid="stHorizontalBlock"] { flex-wrap:wrap !important; gap:16px !important; }
+ [data-testid="stHorizontalBlock"] > [data-testid="stColumn"], [data-testid="stHorizontalBlock"] > [data-testid="column"] { flex:1 1 100% !important; min-width:0 !important; width:100% !important; }
+ [data-testid="stRadio"] div[role="radiogroup"] > label { padding:12px 2px; }
+ [data-testid="stRadio"] div[role="radiogroup"] p { font-size:13px; }
+ .record { gap:9px; } .record-icon { width:37px; height:37px; font-size:18px; } .record-amount { font-size:14px; }
+ [data-testid="stDateInput"] input { font-size:16px !important; }
+}
+@media(prefers-reduced-motion:reduce) { * { scroll-behavior:auto !important; animation-duration:0.01ms !important; } }
+</style>""", unsafe_allow_html=True)
+
+st.markdown('<div class="brand">🌱 내 용돈 연구소 <small>MY MONEY JOURNAL</small></div>', unsafe_allow_html=True)
+page = st.radio("메뉴", NAV, horizontal=True, label_visibility="collapsed", key="nav")
+if "flash" in st.session_state:
+    st.success(st.session_state.pop("flash"))
+
+with st.spinner("나의 용돈 기록을 불러오고 있어요…"):
+    try:
+        df = load_data()
+    except (sqlite3.Error, pd.errors.DatabaseError):
+        st.error("기록을 불러오지 못했어요. 저장 공간과 데이터베이스 파일 상태를 확인해 주세요.")
+        st.stop()
+invalid = df["spent_on"].isna()
+if invalid.any():
+    st.warning(f"날짜를 읽을 수 없는 기록 {int(invalid.sum())}건은 화면에서 제외했어요. 원본 DB를 확인해 주세요.")
+    df = df.loc[~invalid].copy()
 today = date.today()
 current_month = today.strftime("%Y-%m")
+month_df = df[df["spent_on"].map(lambda d: d.strftime("%Y-%m") == current_month)]
 
-# 탭을 사용해 휴대폰에서도 메뉴를 쉽게 찾도록 구성
-tab_home, tab_add, tab_history, tab_insight = st.tabs(
-    ["🏠 한눈에 보기", "➕ 지출 기록", "📒 기록장", "🔎 소비 분석"]
-)
+if page == "홈":
+    image = hero_image()
+    image_tag = f'<img src="data:image/jpeg;base64,{image}" alt="동전과 새싹, 저금통이 놓인 용돈 관리 일러스트">' if image else '<div class="empty-icon">🌱 🐷 🪙</div>'
+    st.markdown(f'<section class="hero"><div class="hero-copy"><span class="eyebrow">SMALL STEPS, SMART MONEY</span><h1>작은 기록이 모여,<br>똑똑한 소비 습관으로.</h1><p>오늘의 소비를 가볍게 남겨요.<br>내 돈의 흐름을 함께 살펴볼게요.</p></div>{image_tag}</section>', unsafe_allow_html=True)
+    heading(f"{today.year}.{today.month:02d} OVERVIEW", "이번 달, 얼마나 썼을까요?")
+    total, count = int(month_df["amount"].sum()), len(month_df)
+    average = round(total / count) if count else 0
+    st.markdown(f'<div class="stats"><div class="stat"><div class="stat-label">이번 달 총지출</div><div class="stat-value">{money(total)}</div><div class="stat-note">{today.month}월 1일 ~ 오늘 · 입력한 기록 기준</div></div><div class="stat"><div class="stat-label">남긴 기록</div><div class="stat-value">{count}건</div><div class="stat-note">하나하나 쌓이는 나의 습관</div></div><div class="stat"><div class="stat-label">한 번 쓸 때 평균</div><div class="stat-value">{money(average)}</div><div class="stat-note">총지출 ÷ 기록 수</div></div></div>', unsafe_allow_html=True)
+    left, right = st.columns([1.1, 1], gap="large")
+    with left:
+        heading("SPENDING MAP", "어디에 썼을까요?")
+        if month_df.empty:
+            empty_state()
+        else:
+            category_chart(month_df)
+    with right:
+        heading("RECENT RECORDS", "최근 남긴 기록", "가장 최근 지출 5건을 보여드려요.")
+        if df.empty:
+            empty_state("첫 기록을 기다리고 있어요", "위의 ‘기록하기’ 메뉴에서 시작하세요.")
+        else:
+            record_cards(df.head(5))
+    if not month_df.empty:
+        top = month_df.groupby("category")["amount"].sum().idxmax()
+        st.markdown(f'<div class="tip">💡 이번 달에는 <strong>{esc(top)}</strong>에 가장 많이 썼어요. 꼭 필요했던 소비인지 한 번 돌아볼까요?</div>', unsafe_allow_html=True)
 
-# ------------------------------------------------------------
-# 지출 추가
-# ------------------------------------------------------------
-with tab_add:
-    st.subheader("새로운 지출 기록하기")
-    st.caption("오늘 쓴 돈을 간단히 적어 보세요. 모르는 항목은 '기타'를 선택하면 돼요.")
-    with st.form("expense_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        with col1:
-            spent_on = st.date_input("📅 언제 썼나요?", value=today, max_value=today)
-            item = st.text_input("🛍️ 무엇을 샀나요?", placeholder="예: 김밥, 버스비, 공책")
-            category = st.selectbox("🏷️ 어떤 종류인가요?", CATEGORIES)
-        with col2:
-            amount = st.number_input("💵 얼마를 썼나요? (원)", min_value=1, max_value=100000000, value=3000, step=500)
-            memo = st.text_input("📝 메모 (선택)", placeholder="예: 친구와 점심")
-            st.write("")
-            st.write("")
-            submitted = st.form_submit_button("기록 저장하기 ✅", use_container_width=True, type="primary")
-
+elif page == "기록하기":
+    heading("NEW RECORD", "오늘의 지출을 남겨요", "필수 항목만 입력하면 끝! 메모는 비워도 괜찮아요.")
+    with st.form("expense_form", clear_on_submit=False):
+        c1, c2 = st.columns(2, gap="large")
+        with c1:
+            spent_on = st.date_input("언제 썼나요?", value=today, max_value=today)
+            item = st.text_input("무엇을 샀나요?", placeholder="예: 점심 김밥", max_chars=100)
+            category = st.selectbox("어떤 종류인가요?", CATEGORIES, format_func=lambda c: f"{ICONS[c]}  {c}")
+        with c2:
+            amount = st.number_input("얼마를 썼나요? (원)", min_value=1, max_value=100000000, value=3000, step=500)
+            memo = st.text_area("메모 · 선택", placeholder="기억하고 싶은 내용을 적어 주세요.", max_chars=500, height=120)
+        submitted = st.form_submit_button("지출 저장하기", type="primary", use_container_width=True)
         if submitted:
             if not item.strip():
-                st.error("무엇을 샀는지 한 글자 이상 적어 주세요!")
+                st.error("무엇을 샀는지 입력해 주세요. 작성한 내용은 그대로 남아 있어요.")
             else:
-                with get_connection() as conn:
-                    conn.execute(
-                        "INSERT INTO expenses (spent_on, item, category, amount, memo) VALUES (?, ?, ?, ?, ?)",
-                        (spent_on.isoformat(), item.strip(), category, int(amount), memo.strip()),
-                    )
-                    conn.commit()
-                st.success(f"{item.strip()} 지출 {money(amount)}을(를) 저장했어요!")
-                st.rerun()
+                try:
+                    with st.spinner("소중한 기록을 저장하고 있어요…"):
+                        add_expense(spent_on, item, category, amount, memo)
+                    st.session_state["flash"] = f"저장 완료! {item.strip()} · {money(amount)}"
+                    st.rerun()
+                except sqlite3.Error:
+                    st.error("저장하지 못했어요. 입력 내용은 유지돼요. 잠시 후 다시 시도해 주세요.")
+    st.caption("저장 후 입력 내용을 유지해요. 같은 지출을 다시 저장하지 않도록 완료 메시지를 확인해 주세요.")
 
-# ------------------------------------------------------------
-# 대시보드
-# ------------------------------------------------------------
-with tab_home:
-    st.subheader("이번 달 용돈 성적표")
-    month_df = df[df["spent_on"].apply(lambda x: x.strftime("%Y-%m") == current_month)] if not df.empty else df
-    total = int(month_df["amount"].sum()) if not month_df.empty else 0
-    count = len(month_df)
-    avg = round(total / count) if count else 0
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("이번 달 총지출", money(total))
-    c2.metric("기록한 횟수", f"{count}번")
-    c3.metric("한 번 쓸 때 평균", money(avg))
-
-    st.markdown("### 🧭 이번 달 돈 사용 지도")
-    if month_df.empty:
-        st.info("아직 이번 달 기록이 없어요. '지출 기록'에서 첫 지출을 추가해 보세요!")
-    else:
-        by_cat = month_df.groupby("category", as_index=False)["amount"].sum().sort_values("amount", ascending=False)
-        left, right = st.columns([1.15, 1])
-        with left:
-            fig = px.pie(
-                by_cat, names="category", values="amount", hole=.55,
-                color="category", color_discrete_map=COLORS,
-            )
-            fig.update_layout(
-                margin=dict(t=10, b=10, l=5, r=5), height=300,
-                legend_title_text="", paper_bgcolor="rgba(0,0,0,0)",
-                font=dict(family="Noto Sans KR"),
-            )
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        with right:
-            st.write("**어디에 가장 많이 썼을까요?**")
-            for _, row in by_cat.iterrows():
-                ratio = row["amount"] / total if total else 0
-                st.write(f"{row['category']} · {money(row['amount'])} ({ratio:.0%})")
-                st.progress(float(ratio))
-        biggest = by_cat.iloc[0]
-        st.success(f"이번 달에는 **{biggest['category']}**에 가장 많이 썼어요. ({money(biggest['amount'])})")
-
-    st.markdown("### 💡 이번 달 작은 팁")
-    if total == 0:
-        st.write("지출을 기록하면 나에게 맞는 소비 팁이 여기에 나타나요.")
-    elif count >= 3:
-        top_category = month_df.groupby("category")["amount"].sum().idxmax()
-        st.write(f"'{top_category}' 지출을 한 번 살펴보세요. 꼭 필요한 소비였는지 돌아보면 다음 달 계획에 도움이 돼요.")
-    else:
-        st.write("기록이 조금 더 쌓이면 소비 습관을 더 정확하게 살펴볼 수 있어요.")
-
-# ------------------------------------------------------------
-# 전체 기록 및 삭제
-# ------------------------------------------------------------
-with tab_history:
-    st.subheader("내 지출 기록장")
+elif page == "기록장":
+    heading("MY JOURNAL", "나의 지출 기록장", "날짜와 종류로 찾고, CSV로 안전하게 보관하세요.")
     if df.empty:
-        st.info("아직 저장된 기록이 없어요. 지출을 추가하면 이곳에 모여요.")
+        empty_state()
     else:
-        filter_months = sorted({d.strftime("%Y-%m") for d in df["spent_on"]}, reverse=True)
-        selected_month = st.selectbox("보고 싶은 달을 골라요", ["전체 보기"] + filter_months)
-        view_df = df.copy()
-        if selected_month != "전체 보기":
-            view_df = view_df[view_df["spent_on"].apply(lambda x: x.strftime("%Y-%m") == selected_month)]
-        show_df = view_df[["spent_on", "item", "category", "amount", "memo"]].copy()
-        show_df.columns = ["날짜", "사용한 곳", "종류", "금액(원)", "메모"]
-        st.dataframe(show_df, use_container_width=True, hide_index=True)
-        st.caption(f"총 {len(view_df)}개의 기록 · 합계 {money(view_df['amount'].sum())}")
+        a, b = st.columns(2)
+        months = sorted({d.strftime("%Y-%m") for d in df["spent_on"]}, reverse=True)
+        selected_month = a.selectbox("보고 싶은 달", ["전체"] + months)
+        selected_cat = b.selectbox("종류", ["전체"] + CATEGORIES)
+        search = st.text_input("기록 검색", placeholder="사용한 곳 또는 메모로 검색")
+        view = df.copy()
+        if selected_month != "전체":
+            view = view[view["spent_on"].map(lambda d: d.strftime("%Y-%m") == selected_month)]
+        if selected_cat != "전체":
+            view = view[view["category"] == selected_cat]
+        if search.strip():
+            view = view[view["item"].str.contains(search.strip(), case=False, regex=False, na=False) | view["memo"].str.contains(search.strip(), case=False, regex=False, na=False)]
+        st.caption(f"찾은 기록 {len(view)}건 · 합계 {money(view['amount'].sum())}")
+        if view.empty:
+            empty_state("검색 결과가 없어요", "검색어나 필터를 바꿔 보세요.")
+        else:
+            display = st.radio("표시 방식", ["카드", "표"], horizontal=True, key="history_display")
+            table = view.rename(columns={"spent_on": "날짜", "item": "사용한 곳", "category": "종류", "amount": "금액(원)", "memo": "메모"})
+            if display == "카드":
+                pages = max(1, (len(view) + 19) // 20)
+                page_no = st.selectbox("페이지 · 20건씩", range(1, pages + 1), format_func=lambda n: f"{n} / {pages}")
+                record_cards(view.iloc[(page_no - 1) * 20:page_no * 20])
+            else:
+                st.dataframe(table[["날짜", "사용한 곳", "종류", "금액(원)", "메모"]], hide_index=True, use_container_width=True)
+            # Spreadsheet formula injection prevention for exported user-entered text.
+            exported = table[["날짜", "사용한 곳", "종류", "금액(원)", "메모"]].copy()
+            for column in ["사용한 곳", "종류", "메모"]:
+                exported[column] = exported[column].map(lambda v: "'" + str(v) if str(v).lstrip().startswith(("=", "+", "-", "@")) else v)
+            st.download_button("이 기록 CSV로 내려받기", exported.to_csv(index=False).encode("utf-8-sig"), file_name=f"expenses_{today.isoformat()}.csv", mime="text/csv", use_container_width=True)
+            with st.expander("잘못 입력한 기록 삭제"):
+                ids = view["id"].astype(int).tolist()
+                labels = {int(r.id): f"#{r.id} · {r.spent_on} · {r.item} · {money(r.amount)}" for r in view.itertuples()}
+                selected_id = st.selectbox("삭제할 기록", ids, format_func=lambda rid: labels[rid])
+                confirmed = st.checkbox("선택한 기록을 삭제할게요. 되돌릴 수 없어요.", key=f"confirm_delete_{selected_id}")
+                if st.button("이 기록 삭제", disabled=not confirmed, use_container_width=True):
+                    try:
+                        with st.spinner("선택한 기록을 삭제하고 있어요…"):
+                            delete_expense(selected_id)
+                        st.session_state["flash"] = "선택한 기록을 삭제했어요."
+                        st.rerun()
+                    except sqlite3.Error:
+                        st.error("삭제하지 못했어요. 잠시 후 다시 시도해 주세요.")
 
-        with st.expander("잘못 입력한 기록 삭제하기"):
-            options = {
-                f"{row.spent_on} · {row.item} · {money(row.amount)}": int(row.id)
-                for row in view_df.itertuples()
-            }
-            selected_label = st.selectbox("삭제할 기록을 선택하세요", list(options.keys()))
-            if st.button("선택한 기록 삭제", type="secondary"):
-                with get_connection() as conn:
-                    conn.execute("DELETE FROM expenses WHERE id = ?", (options[selected_label],))
-                    conn.commit()
-                st.success("기록을 삭제했어요.")
-                st.rerun()
-
-# ------------------------------------------------------------
-# 분석 및 다음 달 예측
-# ------------------------------------------------------------
-with tab_insight:
-    st.subheader("소비 습관 탐정 🔎")
-    st.caption("기록된 지출을 바탕으로 간단한 통계와 다음 달 예상 금액을 계산해요.")
+else:
+    heading("MONEY INSIGHT", "기록 속 소비 습관을 발견해요", "입력된 기록만으로 계산한 참고 정보예요.")
     if df.empty:
-        st.info("분석하려면 먼저 지출을 3번 이상 기록해 주세요.")
+        empty_state("분석할 기록이 아직 없어요")
     else:
-        monthly = df.copy()
-        monthly["month"] = monthly["spent_on"].apply(lambda x: x.strftime("%Y-%m"))
-        monthly_totals = monthly.groupby("month")["amount"].sum().sort_index()
-        all_months = pd.period_range(
-            start=pd.Period(monthly["month"].min(), freq="M"),
-            end=pd.Period(today.strftime("%Y-%m"), freq="M"),
-            freq="M",
-        ).astype(str)
-        monthly_totals = monthly_totals.reindex(all_months, fill_value=0)
-        recent = monthly_totals.tail(3)
-        prediction = int(round(recent.mean())) if len(recent) else 0
-
-        st.markdown("### 🔮 다음 달 예상 지출")
-        p1, p2 = st.columns(2)
-        p1.metric("다음 달 예상", money(prediction))
-        p2.metric("예측에 사용한 기간", f"최근 {len(recent)}개월")
-        st.caption("예측 방법: 최근 최대 3개월의 월별 지출 평균이에요. 미래 지출을 보장하는 값이 아니라 참고용이에요.")
-
-        chart_df = monthly_totals.reset_index()
-        chart_df.columns = ["월", "지출"]
-        fig = px.bar(chart_df, x="월", y="지출", text_auto=".2s")
-        fig.update_traces(marker_color="#6C83EA")
-        fig.update_layout(
-            height=300, margin=dict(t=15, b=10, l=5, r=5),
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            yaxis_title="지출 금액 (원)", xaxis_title="월",
-            font=dict(family="Noto Sans KR"),
-        )
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
-        st.markdown("### 📌 내가 자주 쓰는 곳")
-        cat_totals = df.groupby("category")["amount"].sum().sort_values(ascending=False)
-        for cat, value in cat_totals.head(3).items():
-            st.write(f"- **{cat}**: {money(value)}")
-
-        st.markdown("### 🎯 다음 달 목표 세우기")
-        default_goal = max(0, int(prediction * 0.9))
-        goal = st.number_input("다음 달 지출 목표 (원)", min_value=0, value=default_goal, step=1000)
-        if prediction > 0:
+        valid_df = df[df["spent_on"] <= today].copy()
+        valid_df["month"] = valid_df["spent_on"].map(lambda d: d.strftime("%Y-%m"))
+        monthly = valid_df.groupby("month")["amount"].sum().sort_index()
+        heading("MONTHLY TREND", "월별 지출 흐름")
+        if not monthly.empty:
+            chart = monthly.reset_index()
+            chart.columns = ["월", "지출(원)"]
+            fig = px.bar(chart, x="월", y="지출(원)", color_discrete_sequence=["#1751D0"])
+            fig.update_xaxes(type="category")
+            fig.update_yaxes(rangemode="tozero")
+            fig.update_traces(hovertemplate="%{x}<br>%{y:,.0f}원<extra></extra>")
+            st.plotly_chart(chart_style(fig), use_container_width=True, config={"displayModeBar": False, "scrollZoom": False})
+            st.caption("기록이 없는 달은 0원으로 간주하지 않고 생략했어요. 이번 달은 오늘까지의 금액이에요.")
+            with st.expander("월별 금액 보기"):
+                st.dataframe(chart, hide_index=True, use_container_width=True)
+        heading("NEXT MONTH", "다음 달은 얼마나 쓸까요?")
+        # Exclude the incomplete current month; missing months are not assumed to be zero.
+        previous = (pd.Period(current_month, freq="M") - 1)
+        recent_keys = [str(previous - i) for i in range(2, -1, -1)]
+        recent = monthly.reindex(recent_keys).dropna()
+        if recent.empty:
+            st.info("직전 3개월 중 지난달까지의 기록이 없어 아직 예상하지 않아요. 이번 달 진행 중인 금액은 평균에서 제외했어요.")
+        else:
+            prediction = int(round(recent.mean()))
+            st.metric("다음 달 예상 지출 · 참고용", money(prediction))
+            st.caption(f"계산: 직전 3개월 중 기록이 있는 {len(recent)}개월의 평균. 사용한 달: {', '.join(recent.index)}. 기록 누락에 따라 실제보다 낮을 수 있어요.")
+            goal = st.number_input("다음 달 지출 목표 (원) · 저장되지 않는 계산기", min_value=0, max_value=1000000000, value=min(1000000000, max(0, int(prediction * .9))), step=1000)
             if goal < prediction:
-                st.success(f"최근 평균보다 {money(prediction - goal)} 아껴 쓰는 목표예요. 할 수 있어요! 💪")
-            elif goal == prediction:
-                st.info("최근 평균을 유지하는 목표예요.")
+                st.success(f"최근 평균보다 {money(prediction - goal)} 줄이는 목표예요. 작은 실천부터 시작해요! 🌱")
             else:
-                st.info("목표 금액이 최근 평균보다 높아요. 필요한 지출인지 확인해 보세요.")
+                st.info("필요한 지출을 고려해 나에게 맞는 목표를 세워 보세요.")
+        heading("BY CATEGORY", "전체 기록의 종류별 지출")
+        category_chart(df)
 
-st.divider()
-st.caption("🔒 데이터 안내: 지출 기록은 이 앱이 실행되는 환경의 expenses.db 파일에 저장돼요. 배포 환경이 초기화되거나 파일이 사라지면 기록도 사라질 수 있으니 중요한 데이터는 따로 보관하세요.")
-st.caption("내 용돈 연구소 · 나의 소비를 알고, 더 똑똑하게 사용하기!")
+st.markdown('<div class="footer">🌱 내 용돈 연구소 · 작은 기록, 더 나은 소비<br>저장 안내: 기록은 서버의 expenses.db에 저장돼요. Streamlit Community Cloud의 재배포·재시작 등으로 사라질 수 있어요. 기록장의 CSV 다운로드로 별도 보관하세요.<br>공개 배포 주의: 로그인·사용자 분리가 없는 앱이에요. 같은 배포 주소를 사용하는 사람은 같은 기록을 보고 추가·삭제할 수 있으니 개인정보를 입력하지 마세요.</div>', unsafe_allow_html=True)
