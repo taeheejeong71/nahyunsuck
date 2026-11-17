@@ -1,4 +1,9 @@
 import html
+import hashlib
+import hmac
+import secrets
+import re
+import time
 import sqlite3
 from contextlib import closing
 from datetime import date
@@ -25,17 +30,132 @@ def esc(value):
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH, timeout=20)
-    conn.execute("""CREATE TABLE IF NOT EXISTS expenses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, spent_on TEXT NOT NULL,
-        item TEXT NOT NULL, category TEXT NOT NULL,
-        amount INTEGER NOT NULL CHECK(amount > 0), memo TEXT DEFAULT '')""")
-    conn.commit()
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL,
+            salt TEXT NOT NULL, password_hash TEXT NOT NULL, created_at REAL NOT NULL)""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, spent_on TEXT NOT NULL,
+            item TEXT NOT NULL, category TEXT NOT NULL,
+            amount INTEGER NOT NULL CHECK(amount > 0), memo TEXT DEFAULT '',
+            user_id INTEGER REFERENCES users(id))""")
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(expenses)")}
+        if "user_id" not in columns:
+            conn.execute("ALTER TABLE expenses ADD COLUMN user_id INTEGER REFERENCES users(id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS expenses_user_idx ON expenses(user_id)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS login_limits (
+            username TEXT PRIMARY KEY, failures INTEGER NOT NULL, blocked_until REAL NOT NULL)""")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
     return conn
+
+
+def password_digest(password, salt):
+    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), 600000).hex()
+
+
+def register_user(username, password):
+    username = username.strip().lower()
+    if not re.fullmatch(r"[a-z0-9_]{3,32}", username):
+        raise ValueError("아이디는 영문 소문자·숫자·밑줄로 3~32자 입력하세요.")
+    if not 10 <= len(password) <= 128:
+        raise ValueError("비밀번호는 10~128자로 입력하세요.")
+    salt = secrets.token_hex(16)
+    digest = password_digest(password, salt)
+    with closing(get_connection()) as conn:
+        with conn:
+            try:
+                conn.execute("INSERT INTO users(username,salt,password_hash,created_at) VALUES (?,?,?,?)",
+                             (username, salt, digest, time.time()))
+            except sqlite3.IntegrityError:
+                raise ValueError("사용할 수 없는 아이디입니다. 다른 아이디를 입력하세요.") from None
+
+
+def authenticate(username, password):
+    username = username.strip().lower()[:128]
+    now = time.time()
+    with closing(get_connection()) as conn:
+        # Serial transaction prevents simultaneous attempts bypassing the counter.
+        conn.execute("BEGIN IMMEDIATE")
+        limit = conn.execute("SELECT failures, blocked_until FROM login_limits WHERE username=?", (username,)).fetchone()
+        if limit and limit[1] > now:
+            conn.rollback()
+            return None
+        user = conn.execute("SELECT id,username,salt,password_hash FROM users WHERE username=?", (username,)).fetchone()
+        salt = user[2] if user else "0" * 32
+        actual = password_digest(password[:129], salt)
+        valid = hmac.compare_digest(actual, user[3] if user else "0" * 64) and len(password) <= 128
+        if valid and user:
+            conn.execute("DELETE FROM login_limits WHERE username=?", (username,))
+            conn.commit()
+            return {"id": int(user[0]), "username": user[1], "expires": now + 43200}
+        failures = (limit[0] if limit and limit[1] == 0 else 0) + 1
+        blocked = now + 300 if failures >= 5 else 0
+        conn.execute("INSERT INTO login_limits VALUES (?,?,?) ON CONFLICT(username) DO UPDATE SET failures=excluded.failures, blocked_until=excluded.blocked_until",
+                     (username, failures, blocked))
+        conn.commit()
+        return None
+
+
+def current_user_id():
+    auth = st.session_state.get("auth")
+    if not auth or auth.get("expires", 0) <= time.time():
+        raise PermissionError("로그인이 필요합니다.")
+    return int(auth["id"])
+
+
+def logout():
+    st.session_state.clear()
+    st.rerun()
+
+
+def login_screen():
+    st.markdown('<h1>내 용돈 연구소</h1><div class="subtitle">지출 기록부터 소비 분석까지 · 나만의 용돈 관리</div>', unsafe_allow_html=True)
+    mode = st.radio("시작하기", ["로그인", "회원가입"], horizontal=True, label_visibility="collapsed")
+    if "auth_notice" in st.session_state:
+        st.success(st.session_state.pop("auth_notice"))
+    with st.form("auth_form", clear_on_submit=True):
+        username = st.text_input("아이디", max_chars=32, placeholder="영문 소문자·숫자·밑줄, 3~32자")
+        password = st.text_input("비밀번호", type="password", max_chars=128, placeholder="10자 이상")
+        if mode == "회원가입":
+            confirmation = st.text_input("비밀번호 확인", type="password", max_chars=128)
+        submitted = st.form_submit_button(mode, type="primary", use_container_width=True)
+    if submitted:
+        try:
+            if mode == "회원가입":
+                if password != confirmation:
+                    st.error("비밀번호가 일치하지 않습니다.")
+                else:
+                    with st.spinner("계정을 안전하게 만드는 중…"):
+                        register_user(username, password)
+                    st.session_state["auth_notice"] = "가입했습니다. 로그인으로 전환해 접속하세요."
+                    st.rerun()
+            else:
+                with st.spinner("로그인 확인 중…"):
+                    auth = authenticate(username, password)
+                if auth:
+                    st.session_state["auth"] = auth
+                    st.session_state["page"] = "홈"
+                    st.rerun()
+                else:
+                    st.error("아이디·비밀번호가 올바르지 않거나 잠시 제한되었습니다. 5회 실패하면 5분 후 다시 시도하세요.")
+        except ValueError as exc:
+            st.error(str(exc))
+        except sqlite3.Error:
+            st.error("계정 저장소에 연결하지 못했습니다. 잠시 후 다시 시도하세요.")
+    st.caption("계정별로 기록을 분리합니다. 공용 기기에서는 사용 후 로그아웃하세요.")
+    with st.expander("계정·저장 안내"):
+        st.caption("계정과 기록은 서버의 SQLite DB에 저장됩니다. 재배포·재시작 등으로 유실될 수 있습니다. 영구 운영에는 외부 DB 연결이 필요합니다. 비밀번호 재설정·이메일 인증은 제공하지 않으므로 다른 서비스와 다른 비밀번호를 사용하세요. 이전 공용 기록은 자동 배정하지 않고 DB에 그대로 보존합니다.")
 
 
 def load_data():
     with closing(get_connection()) as conn:
-        frame = pd.read_sql_query("SELECT id, spent_on, item, category, amount, memo FROM expenses ORDER BY spent_on DESC, id DESC", conn)
+        frame = pd.read_sql_query("SELECT id, spent_on, item, category, amount, memo FROM expenses WHERE user_id=? ORDER BY spent_on DESC, id DESC", conn, params=(current_user_id(),))
     frame = frame.reindex(columns=FIELDS)
     frame["spent_on"] = pd.to_datetime(frame["spent_on"], errors="coerce").dt.date
     frame["amount"] = pd.to_numeric(frame["amount"], errors="coerce").fillna(0).astype("int64")
@@ -60,14 +180,14 @@ def filter_records(frame, month="전체", category="전체", query=""):
 def add_expense(day, item, category, amount, memo):
     with closing(get_connection()) as conn:
         with conn:
-            conn.execute("INSERT INTO expenses (spent_on,item,category,amount,memo) VALUES (?,?,?,?,?)",
-                         (day.isoformat(), item.strip(), category, int(amount), memo.strip()))
+            conn.execute("INSERT INTO expenses (spent_on,item,category,amount,memo,user_id) VALUES (?,?,?,?,?,?)",
+                         (day.isoformat(), item.strip(), category, int(amount), memo.strip(), current_user_id()))
 
 
 def delete_expense(record_id):
     with closing(get_connection()) as conn:
         with conn:
-            conn.execute("DELETE FROM expenses WHERE id=?", (int(record_id),))
+            conn.execute("DELETE FROM expenses WHERE id=? AND user_id=?", (int(record_id), current_user_id()))
 
 
 def table_data(frame):
@@ -160,6 +280,7 @@ input,textarea { font-size:16px !important; color:#1E2433 !important; -webkit-te
 .pie-row strong { font-size:14px; font-variant-numeric:tabular-nums; }
 .pie-name { display:flex; gap:8px; align-items:center; overflow-wrap:anywhere; }
 .pie-name i { display:block; width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+[data-testid="stSpinner"] { padding:14px 16px; border:1px solid #D7E2FA; border-radius:12px; background:#EDF3FF; color:#1E2433; }
 @media(max-width:640px) {
  .block-container { padding:4.25rem .9rem 1rem; }
  h1 { font-size:23px !important; }
@@ -172,6 +293,14 @@ input,textarea { font-size:16px !important; color:#1E2433 !important; -webkit-te
 }
 </style>''', unsafe_allow_html=True)
 
+auth = st.session_state.get("auth")
+if auth and auth.get("expires", 0) <= time.time():
+    st.session_state.clear()
+    auth = None
+if not auth:
+    login_screen()
+    st.stop()
+
 if "page" not in st.session_state:
     st.session_state["page"] = "홈"
 with st.sidebar:
@@ -180,11 +309,14 @@ with st.sidebar:
         if st.button(label, key=f"menu_{label}", type="primary" if st.session_state["page"] == label else "secondary", use_container_width=True):
             st.session_state["page"] = label
             st.rerun()
-    with st.expander("저장·공개 배포 안내"):
-        st.caption("로그인 없이 같은 주소의 사용자가 같은 기록을 공유합니다. 서버 재시작·재배포로 DB가 사라질 수 있으니 CSV로 별도 보관하세요.")
+    st.caption(f"로그인: {st.session_state['auth']['username']}")
+    if st.button("로그아웃", key="logout", use_container_width=True):
+        logout()
+    with st.expander("저장 안내"):
+        st.caption("내 계정의 기록만 표시합니다. 서버 재시작·재배포로 계정과 DB가 사라질 수 있으니 CSV로 별도 보관하세요. 이전 공용 기록은 DB에 보존하며 자동 배정하지 않습니다.")
 page = st.session_state["page"]
-st.title({"홈": "이번 달 지출", "기록하기": "지출 기록하기", "기록장": "지출 기록장", "분석": "소비 분석"}[page])
-st.markdown('<div class="subtitle">필요한 정보만, 간결하게.</div>', unsafe_allow_html=True)
+st.title({"홈": "내 용돈 연구소", "기록하기": "지출 기록하기", "기록장": "지출 기록장", "분석": "소비 분석"}[page])
+st.markdown('<div class="subtitle">지출 기록부터 소비 분석까지 · 나만의 용돈 관리</div>', unsafe_allow_html=True)
 if "flash" in st.session_state:
     st.success(st.session_state.pop("flash"))
 with st.spinner("기록 불러오는 중…"):
