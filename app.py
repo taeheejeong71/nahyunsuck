@@ -195,6 +195,59 @@ def update_expense(record_id, day, item, category, amount, memo):
                 (day.isoformat(), item.strip(), category, int(amount), memo.strip(), int(record_id), current_user_id())).rowcount
 
 
+@st.dialog("기록 수정")
+def edit_record_dialog(record_id):
+    owned = load_data()
+    matches = owned.loc[owned["id"].eq(record_id)]
+    if matches.empty:
+        st.info("기록이 삭제되었거나 접근할 수 없습니다.")
+        return
+    row = matches.iloc[0]
+    with st.form(f"edit_dialog_{record_id}"):
+        item = st.text_input("사용한 곳", value=row["item"], max_chars=100)
+        amount = st.number_input("금액 (원)", min_value=1, max_value=100000000, value=max(1,min(100000000,int(row["amount"]))), step=100)
+        day = st.date_input("날짜", value=row["spent_on"], max_value=max(date.today(), row["spent_on"]))
+        options = CATEGORIES if row["category"] in CATEGORIES else CATEGORIES + [row["category"]]
+        category = st.selectbox("종류", options, index=options.index(row["category"]))
+        memo = st.text_input("메모", value=row["memo"], max_chars=500)
+        if st.form_submit_button("변경사항 저장", type="primary", use_container_width=True):
+            try:
+                with st.spinner("저장 중…"):
+                    count = update_expense(record_id, day, item, category, amount, memo)
+                st.session_state["flash"] = "기록을 수정했습니다." if count else "기록을 찾지 못했습니다."
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+            except sqlite3.Error:
+                st.error("저장하지 못했습니다. 다시 시도해 주세요.")
+
+
+@st.dialog("삭제 확인")
+def delete_records_dialog(record_ids=None):
+    owned = load_data()
+    all_records = record_ids is None
+    targets = owned if all_records else owned.loc[owned["id"].isin(record_ids)]
+    if targets.empty:
+        st.info("삭제할 기록이 없습니다.")
+        return
+    st.warning(f"{'본인의 전체' if all_records else '선택한'} 기록 {len(targets)}건 · {money(targets['amount'].sum())}을 삭제합니다. 복구할 수 없습니다.")
+    if all_records:
+        st.caption("검색·필터에 숨겨진 기록도 삭제합니다. 계정과 월 예산은 유지합니다.")
+        phrase = st.text_input("확인을 위해 ‘전체삭제’를 입력하세요")
+        enabled = phrase == "전체삭제"
+    else:
+        enabled = True
+    if st.button("영구 삭제 확정", type="primary", disabled=not enabled, use_container_width=True):
+        try:
+            with st.spinner("삭제 중…"):
+                count = delete_records(None if all_records else targets["id"].tolist())
+            st.session_state["flash"] = f"{count}건을 삭제했습니다."
+            st.rerun()
+        except sqlite3.Error:
+            st.error("삭제하지 못했습니다. 다시 시도해 주세요.")
+    st.caption("취소하려면 이 창의 × 버튼을 누르세요.")
+
+
 def filter_records(frame, month="전체", category="전체", query=""):
     # A typed Boolean mask preserves columns even when there are zero rows.
     mask = pd.Series(True, index=frame.index, dtype=bool)
@@ -472,77 +525,61 @@ elif page == "기록하기":
     st.caption("저장 후 입력 내용은 유지됩니다. 완료 알림을 확인해 중복 저장을 피하세요.")
 
 elif page == "기록장":
-    months = sorted(pd.to_datetime(df["spent_on"], errors="coerce").dt.strftime("%Y-%m").dropna().unique().tolist(), reverse=True)
-    c1, c2, c3 = st.columns([1, 1, 1.5])
-    selected_month = c1.selectbox("월", ["전체"] + months)
-    selected_cat = c2.selectbox("종류", ["전체"] + CATEGORIES)
-    query = c3.text_input("검색", placeholder="사용한 곳 / 메모")
+    # One search field, optional filters, direct actions on each record.
+    st.markdown("""<style>
+    [data-testid="stVerticalBlockBorderWrapper"] {border-radius:14px;}
+    .ledger-item {font-size:16px;font-weight:650;color:#17283b;overflow-wrap:anywhere;margin:0 0 5px;line-height:1.5;}
+    .ledger-meta {font-size:13px;color:#64748b;line-height:1.6;overflow-wrap:anywhere;}
+    .ledger-price {font-size:18px;font-weight:750;font-variant-numeric:tabular-nums;line-height:1.6;color:#17283b;}
+    </style>""", unsafe_allow_html=True)
+    query = st.text_input("기록 검색", placeholder="사용한 곳이나 메모로 검색", label_visibility="collapsed")
+    with st.popover("월 · 종류 필터", use_container_width=True):
+        months = sorted(pd.to_datetime(df["spent_on"], errors="coerce").dt.strftime("%Y-%m").dropna().unique().tolist(), reverse=True)
+        selected_month = st.selectbox("월", ["전체"] + months)
+        selected_cat = st.selectbox("종류", ["전체"] + CATEGORIES)
     view = filter_records(df, selected_month, selected_cat, query)
-    st.caption(f"{len(view)}건 · 합계 {money(view['amount'].sum())}")
+    suffix = " · ".join(v for v in [selected_month if selected_month != "전체" else "", selected_cat if selected_cat != "전체" else ""] if v)
+    st.caption(f"{len(view)}건 · {money(view['amount'].sum())}" + (f" · {suffix}" if suffix else ""))
+    mode_col, danger_col = st.columns(2)
+    selection_mode = mode_col.toggle("여러 건 선택", key="ledger_selection_mode")
+    if danger_col.button("전체삭제", disabled=df.empty, use_container_width=True, help="필터와 관계없이 본인 기록 전체 삭제"):
+        delete_records_dialog()
     if view.empty:
-        st.info("표시할 기록이 없습니다.")
+        st.info("조건에 맞는 기록이 없습니다. 검색어나 필터를 변경해 보세요." if not df.empty else "아직 기록이 없습니다. ‘기록하기’에서 첫 지출을 남겨 보세요.")
     else:
-        mode = st.radio("보기", ["카드", "표"], horizontal=True, label_visibility="collapsed")
-        if mode == "카드":
-            page_count = (len(view) + 3) // 4
-            number = st.selectbox("페이지 · 4건씩", range(1, page_count + 1), format_func=lambda n: f"{n} / {page_count}")
-            cards(view.iloc[(number - 1) * 4:number * 4])
-        else:
-            st.dataframe(table_data(view), hide_index=True, use_container_width=True, height=245)
-        with st.expander("다운로드 / 삭제"):
-            exported = table_data(view).copy()
-            for col in ["사용한 곳", "종류", "메모"]:
-                exported[col] = exported[col].map(lambda v: "'" + str(v) if str(v).lstrip().startswith(("=", "+", "-", "@")) else v)
-            st.download_button("CSV 다운로드", exported.to_csv(index=False).encode("utf-8-sig"), file_name=f"expenses_{today}.csv", mime="text/csv", use_container_width=True)
-            labels = {int(r.id): f"#{r.id} · {r.item} · {money(r.amount)}" for r in view.itertuples()}
-            chosen = st.multiselect("삭제할 기록 · 여러 건 선택 가능", list(labels), format_func=lambda v: labels[v])
-            confirm = st.checkbox("선택한 기록을 영구 삭제합니다.", key="bulk_confirm")
-            if st.button("선택 기록 삭제", disabled=not (confirm and chosen), use_container_width=True):
-                try:
-                    with st.spinner("선택한 기록 삭제 중…"):
-                        count = delete_records(chosen)
-                    st.session_state["flash"] = f"{count}건을 삭제했습니다."
-                    st.rerun()
-                except sqlite3.Error:
-                    st.error("삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.")
-        with st.expander("기록 수정"):
-            edit_id = st.selectbox("수정할 기록", list(labels), format_func=lambda v: labels[v], key="edit_record")
-            row = view.loc[view["id"].eq(edit_id)].iloc[0]
-            with st.form(f"edit_form_{edit_id}"):
-                e_day = st.date_input("날짜", value=row["spent_on"], max_value=max(today, row["spent_on"]))
-                e_item = st.text_input("사용한 곳", value=row["item"], max_chars=100)
-                e_amount = st.number_input("금액 (원)", min_value=1, max_value=100000000, value=max(1, min(100000000, int(row["amount"]))), step=100)
-                options = CATEGORIES if row["category"] in CATEGORIES else CATEGORIES + [row["category"]]
-                e_cat = st.selectbox("종류", options, index=options.index(row["category"]))
-                e_memo = st.text_input("메모", value=row["memo"], max_chars=500)
-                if st.form_submit_button("수정 저장", type="primary", use_container_width=True):
-                    try:
-                        with st.spinner("수정 저장 중…"):
-                            count = update_expense(edit_id, e_day, e_item, e_cat, e_amount, e_memo)
-                        st.session_state["flash"] = "수정했습니다." if count else "해당 기록을 찾지 못했습니다."
-                        st.rerun()
-                    except ValueError as exc:
-                        st.error(str(exc))
-                    except sqlite3.Error:
-                        st.error("수정하지 못했습니다. 잠시 후 다시 시도해 주세요.")
-    if not df.empty:
-        with st.expander("전체삭제 · 주의"):
-            st.warning(f"검색·월·종류 필터와 관계없이 본인 지출 기록 {len(df)}건을 모두 영구 삭제합니다. 계정과 월 예산은 유지됩니다. 복구할 수 없습니다.")
-            backup = table_data(df).copy()
-            for col in ["사용한 곳", "종류", "메모"]:
-                backup[col] = backup[col].map(lambda v: "'" + str(v) if str(v).lstrip().startswith(("=", "+", "-", "@")) else v)
-            st.download_button("삭제 전 전체 기록 CSV 백업", backup.to_csv(index=False).encode("utf-8-sig"), file_name=f"all_expenses_{today}.csv", mime="text/csv", use_container_width=True)
-            agreed = st.checkbox("다른 계정이 아닌 내 기록 전체를 삭제하는 것을 확인했습니다.")
-            phrase = st.text_input("확인을 위해 '전체삭제'를 입력하세요", key="delete_all_phrase")
-            if st.button("내 기록 전체 영구 삭제", disabled=not (agreed and phrase == "전체삭제"), use_container_width=True):
-                try:
-                    with st.spinner("내 기록 전체 삭제 중…"):
-                        count = delete_records()
-                    st.session_state.pop("delete_all_phrase", None)
-                    st.session_state["flash"] = f"본인 기록 {count}건을 모두 삭제했습니다. 계정과 예산은 유지됩니다."
-                    st.rerun()
-                except sqlite3.Error:
-                    st.error("전체삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+        per_page = 5
+        page_count = (len(view) + per_page - 1) // per_page
+        signature = (query, selected_month, selected_cat, tuple(int(i) for i in view["id"]))
+        if st.session_state.get("ledger_signature") != signature:
+            st.session_state["ledger_signature"] = signature
+            st.session_state["ledger_page"] = 0
+        index = min(max(0, st.session_state.get("ledger_page", 0)), page_count - 1)
+        visible = view.iloc[index * per_page:(index + 1) * per_page]
+        for row in visible.itertuples():
+            with st.container(border=True):
+                st.markdown(f'<div class="ledger-item">{html.escape(str(row.item))}</div><div class="ledger-meta">{row.spent_on:%Y.%m.%d} · {html.escape(str(row.category))}</div>', unsafe_allow_html=True)
+                left, right = st.columns([2,1])
+                left.markdown(f'<div class="ledger-price">{money(row.amount)}</div>', unsafe_allow_html=True)
+                if selection_mode:
+                    right.checkbox("선택", key=f"ledger_pick_{int(row.id)}")
+                elif right.button("수정", key=f"ledger_edit_{int(row.id)}", use_container_width=True):
+                    edit_record_dialog(int(row.id))
+                if row.memo:
+                    st.caption(str(row.memo))
+        if page_count > 1:
+            prev, label, nxt = st.columns([1,1,1])
+            if prev.button("← 이전", disabled=index == 0, use_container_width=True):
+                st.session_state["ledger_page"] = index - 1
+                st.rerun()
+            label.caption(f"{index + 1} / {page_count}")
+            if nxt.button("다음 →", disabled=index == page_count - 1, use_container_width=True):
+                st.session_state["ledger_page"] = index + 1
+                st.rerun()
+        if selection_mode:
+            picked = [int(i) for i in view["id"] if st.session_state.get(f"ledger_pick_{int(i)}", False)]
+            st.caption(f"현재 검색 결과에서 {len(picked)}건 선택 · 페이지를 넘겨도 선택 유지")
+            if st.button(f"선택한 {len(picked)}건 삭제", type="primary", disabled=not picked, use_container_width=True):
+                delete_records_dialog(picked)
 
 else:
     analysis_mode = st.radio("분석 항목", ["월별 지출", "종류별 지출", "다음 달 예상"], horizontal=True, label_visibility="collapsed")
