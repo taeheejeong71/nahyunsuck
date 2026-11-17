@@ -4,6 +4,7 @@ import hmac
 import secrets
 import re
 import time
+import calendar
 import sqlite3
 from contextlib import closing
 from datetime import date
@@ -45,6 +46,10 @@ def get_connection():
         if "user_id" not in columns:
             conn.execute("ALTER TABLE expenses ADD COLUMN user_id INTEGER REFERENCES users(id)")
         conn.execute("CREATE INDEX IF NOT EXISTS expenses_user_idx ON expenses(user_id)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS monthly_budgets (
+            user_id INTEGER NOT NULL REFERENCES users(id), month TEXT NOT NULL,
+            amount INTEGER NOT NULL CHECK(amount >= 0),
+            PRIMARY KEY(user_id, month))""")
         conn.execute("""CREATE TABLE IF NOT EXISTS login_limits (
             username TEXT PRIMARY KEY, failures INTEGER NOT NULL, blocked_until REAL NOT NULL)""")
         conn.commit()
@@ -200,6 +205,66 @@ def cards(frame):
         st.markdown(f'<div class="entry"><div class="entry-main"><strong>{esc(row.item)}</strong><small>{esc(row.spent_on)} · {esc(row.category)}</small></div><b>{money(row.amount)}</b></div>', unsafe_allow_html=True)
 
 
+def get_budget(month):
+    with closing(get_connection()) as conn:
+        row = conn.execute("SELECT amount FROM monthly_budgets WHERE user_id=? AND month=?",
+                           (current_user_id(), month)).fetchone()
+    return int(row[0]) if row else None
+
+
+def save_budget(month, amount):
+    if not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", month):
+        raise ValueError("올바르지 않은 예산 월입니다.")
+    if not isinstance(amount, int) or isinstance(amount, bool) or not 0 <= amount <= 1000000000:
+        raise ValueError("예산은 0~10억 원의 정수로 입력하세요.")
+    with closing(get_connection()) as conn:
+        with conn:
+            conn.execute("""INSERT INTO monthly_budgets(user_id,month,amount) VALUES (?,?,?)
+                ON CONFLICT(user_id,month) DO UPDATE SET amount=excluded.amount""",
+                (current_user_id(), month, amount))
+
+
+def budget_numbers(budget, spent, today):
+    days = calendar.monthrange(today.year, today.month)[1] - today.day + 1
+    remaining = int(budget) - int(spent)
+    return remaining, max(0, remaining) // days, days
+
+
+def budget_panel(month, month_frame, today):
+    try:
+        budget = get_budget(month)
+    except sqlite3.Error:
+        st.error("예산을 불러오지 못했습니다. 잠시 후 다시 시도하세요.")
+        return
+    spent = int(month_frame["amount"].sum())
+    if budget is not None:
+        remaining, daily, days = budget_numbers(budget, spent, today)
+        label = "이번 달 초과 금액" if remaining < 0 else "이번 달 남은 돈"
+        state = "over" if remaining < 0 else ""
+        st.markdown(f'<section class="budget-box {state}"><div class="budget-main"><small>{label}</small><strong>{money(abs(remaining))}</strong><span>월 예산 {money(budget)} · 사용 {money(spent)}</span></div><div class="budget-daily"><small>하루 사용 가능액</small><strong>{money(daily)}</strong><span>오늘 포함 {days}일 기준</span></div></section>', unsafe_allow_html=True)
+        if remaining < 0:
+            st.caption("예산을 초과했습니다. 하루 사용 가능액은 0원으로 표시합니다.")
+        elif remaining == 0:
+            st.caption("이번 달 예산을 모두 사용했습니다.")
+    else:
+        st.info("이번 달 예산을 설정하면 남은 돈과 하루 사용 가능액을 확인할 수 있습니다.")
+    with st.expander("이번 달 예산 설정 / 변경", expanded=budget is None):
+        with st.form(f"budget_form_{current_user_id()}_{month}"):
+            amount = st.number_input("월 예산 (원)", min_value=0, max_value=1000000000,
+                                     value=budget if budget is not None else 300000, step=10000,
+                                     key=f"budget_input_{current_user_id()}_{month}_{budget}")
+            submitted = st.form_submit_button("예산 저장", type="primary", use_container_width=True)
+        st.caption("계정별·월별 저장 · 하루 사용 가능액은 남은 돈 ÷ 오늘 포함 남은 일수의 원 미만 버림입니다. 다음 달 예산은 새로 설정합니다.")
+        if submitted:
+            try:
+                with st.spinner("예산 저장 중…"):
+                    save_budget(month, int(amount))
+                st.session_state["flash"] = "이번 달 예산을 저장했습니다."
+                st.rerun()
+            except (sqlite3.Error, ValueError):
+                st.error("예산을 저장하지 못했습니다. 다시 시도하세요.")
+
+
 def summary(frame):
     total, count = int(frame["amount"].sum()), len(frame)
     avg = round(total / count) if count else 0
@@ -281,7 +346,16 @@ input,textarea { font-size:16px !important; color:#1E2433 !important; -webkit-te
 .pie-name { display:flex; gap:8px; align-items:center; overflow-wrap:anywhere; }
 .pie-name i { display:block; width:10px; height:10px; border-radius:50%; flex-shrink:0; }
 [data-testid="stSpinner"] { padding:14px 16px; border:1px solid #D7E2FA; border-radius:12px; background:#EDF3FF; color:#1E2433; }
+.budget-box { display:grid; grid-template-columns:1.3fr 1fr; gap:12px; background:#EDF3FF; border:1px solid #D7E2FA; padding:16px 18px; border-radius:14px; margin:8px 0; }
+.budget-box.over { background:#FFF2F1; border-color:#E6C3C6; }
+.budget-box small { display:block; font-size:12px; color:#505A74; }
+.budget-box strong { display:block; font-size:27px; line-height:1.5; color:#1E2433; overflow-wrap:anywhere; }
+.budget-box span { display:block; font-size:11px; color:#505A74; line-height:1.6; }
+.budget-daily { border-left:1px solid #CDD3E0; padding-left:16px; }
 @media(max-width:640px) {
+ .budget-box { padding:12px; gap:8px; }
+ .budget-box strong { font-size:21px; }
+ .budget-daily { padding-left:10px; }
  .block-container { padding:4.25rem .9rem 1rem; }
  h1 { font-size:23px !important; }
  .stats { gap:6px; margin:10px 0 14px; }
@@ -335,6 +409,7 @@ month_df = filter_records(df, month=current_month)
 
 if page == "홈":
     st.caption(f"{today.year}년 {today.month}월 · 오늘까지 입력한 기록")
+    budget_panel(current_month, month_df, today)
     summary(month_df)
     # One panel at a time avoids stacking full sections on narrow screens.
     home_mode = st.radio("보기", ["종류별 지출", "최근 기록"], horizontal=True, label_visibility="collapsed")
