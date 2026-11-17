@@ -169,6 +169,32 @@ def load_data():
     return frame
 
 
+def delete_records(record_ids=None):
+    uid = current_user_id()
+    with closing(get_connection()) as conn:
+        with conn:
+            if record_ids is None:
+                result = conn.execute("DELETE FROM expenses WHERE user_id=?", (uid,))
+            else:
+                ids = list(dict.fromkeys(int(i) for i in record_ids))
+                if not ids:
+                    return 0
+                count = 0
+                for rid in ids:
+                    count += conn.execute("DELETE FROM expenses WHERE user_id=? AND id=?", (uid, rid)).rowcount
+                return count
+            return result.rowcount
+
+
+def update_expense(record_id, day, item, category, amount, memo):
+    if not item.strip() or not 1 <= int(amount) <= 100000000 or day > date.today():
+        raise ValueError("사용한 곳, 금액, 날짜를 확인해 주세요.")
+    with closing(get_connection()) as conn:
+        with conn:
+            return conn.execute("UPDATE expenses SET spent_on=?,item=?,category=?,amount=?,memo=? WHERE id=? AND user_id=?",
+                (day.isoformat(), item.strip(), category, int(amount), memo.strip(), int(record_id), current_user_id())).rowcount
+
+
 def filter_records(frame, month="전체", category="전체", query=""):
     # A typed Boolean mask preserves columns even when there are zero rows.
     mask = pd.Series(True, index=frame.index, dtype=bool)
@@ -469,16 +495,54 @@ elif page == "기록장":
                 exported[col] = exported[col].map(lambda v: "'" + str(v) if str(v).lstrip().startswith(("=", "+", "-", "@")) else v)
             st.download_button("CSV 다운로드", exported.to_csv(index=False).encode("utf-8-sig"), file_name=f"expenses_{today}.csv", mime="text/csv", use_container_width=True)
             labels = {int(r.id): f"#{r.id} · {r.item} · {money(r.amount)}" for r in view.itertuples()}
-            rid = st.selectbox("삭제할 기록", list(labels), format_func=lambda v: labels[v])
-            confirm = st.checkbox("이 기록을 삭제합니다. 되돌릴 수 없습니다.", key=f"delete_confirm_{rid}")
-            if st.button("선택 기록 삭제", disabled=not confirm, use_container_width=True):
+            chosen = st.multiselect("삭제할 기록 · 여러 건 선택 가능", list(labels), format_func=lambda v: labels[v])
+            confirm = st.checkbox("선택한 기록을 영구 삭제합니다.", key="bulk_confirm")
+            if st.button("선택 기록 삭제", disabled=not (confirm and chosen), use_container_width=True):
                 try:
-                    with st.spinner("삭제 중…"):
-                        delete_expense(rid)
-                    st.session_state["flash"] = "기록을 삭제했습니다."
+                    with st.spinner("선택한 기록 삭제 중…"):
+                        count = delete_records(chosen)
+                    st.session_state["flash"] = f"{count}건을 삭제했습니다."
                     st.rerun()
                 except sqlite3.Error:
                     st.error("삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+        with st.expander("기록 수정"):
+            edit_id = st.selectbox("수정할 기록", list(labels), format_func=lambda v: labels[v], key="edit_record")
+            row = view.loc[view["id"].eq(edit_id)].iloc[0]
+            with st.form(f"edit_form_{edit_id}"):
+                e_day = st.date_input("날짜", value=row["spent_on"], max_value=max(today, row["spent_on"]))
+                e_item = st.text_input("사용한 곳", value=row["item"], max_chars=100)
+                e_amount = st.number_input("금액 (원)", min_value=1, max_value=100000000, value=max(1, min(100000000, int(row["amount"]))), step=100)
+                options = CATEGORIES if row["category"] in CATEGORIES else CATEGORIES + [row["category"]]
+                e_cat = st.selectbox("종류", options, index=options.index(row["category"]))
+                e_memo = st.text_input("메모", value=row["memo"], max_chars=500)
+                if st.form_submit_button("수정 저장", type="primary", use_container_width=True):
+                    try:
+                        with st.spinner("수정 저장 중…"):
+                            count = update_expense(edit_id, e_day, e_item, e_cat, e_amount, e_memo)
+                        st.session_state["flash"] = "수정했습니다." if count else "해당 기록을 찾지 못했습니다."
+                        st.rerun()
+                    except ValueError as exc:
+                        st.error(str(exc))
+                    except sqlite3.Error:
+                        st.error("수정하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+    if not df.empty:
+        with st.expander("전체삭제 · 주의"):
+            st.warning(f"검색·월·종류 필터와 관계없이 본인 지출 기록 {len(df)}건을 모두 영구 삭제합니다. 계정과 월 예산은 유지됩니다. 복구할 수 없습니다.")
+            backup = table_data(df).copy()
+            for col in ["사용한 곳", "종류", "메모"]:
+                backup[col] = backup[col].map(lambda v: "'" + str(v) if str(v).lstrip().startswith(("=", "+", "-", "@")) else v)
+            st.download_button("삭제 전 전체 기록 CSV 백업", backup.to_csv(index=False).encode("utf-8-sig"), file_name=f"all_expenses_{today}.csv", mime="text/csv", use_container_width=True)
+            agreed = st.checkbox("다른 계정이 아닌 내 기록 전체를 삭제하는 것을 확인했습니다.")
+            phrase = st.text_input("확인을 위해 '전체삭제'를 입력하세요", key="delete_all_phrase")
+            if st.button("내 기록 전체 영구 삭제", disabled=not (agreed and phrase == "전체삭제"), use_container_width=True):
+                try:
+                    with st.spinner("내 기록 전체 삭제 중…"):
+                        count = delete_records()
+                    st.session_state.pop("delete_all_phrase", None)
+                    st.session_state["flash"] = f"본인 기록 {count}건을 모두 삭제했습니다. 계정과 예산은 유지됩니다."
+                    st.rerun()
+                except sqlite3.Error:
+                    st.error("전체삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.")
 
 else:
     analysis_mode = st.radio("분석 항목", ["월별 지출", "종류별 지출", "다음 달 예상"], horizontal=True, label_visibility="collapsed")
