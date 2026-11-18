@@ -245,7 +245,13 @@ def delete_records_dialog(record_ids=None):
             st.rerun()
         except sqlite3.Error:
             st.error("삭제하지 못했습니다. 다시 시도해 주세요.")
-    st.caption("취소하려면 이 창의 × 버튼을 누르세요.")
+
+
+def reset_ledger_filters():
+    st.session_state["ledger_query"] = ""
+    st.session_state["ledger_month"] = "전체"
+    st.session_state["ledger_category"] = "전체"
+    st.session_state["ledger_page"] = 0
 
 
 def filter_records(frame, month="전체", category="전체", query=""):
@@ -333,7 +339,7 @@ def budget_panel(month, month_frame, today):
                                      value=budget if budget is not None else 300000, step=10000,
                                      key=f"budget_input_{current_user_id()}_{month}_{budget}")
             submitted = st.form_submit_button("예산 저장", type="primary", use_container_width=True)
-        st.caption("계정별·월별 저장 · 하루 사용 가능액은 남은 돈 ÷ 오늘 포함 남은 일수의 원 미만 버림입니다. 다음 달 예산은 새로 설정합니다.")
+        st.caption("오늘을 포함한 남은 일수 기준 · 월별 예산 저장")
         if submitted:
             try:
                 with st.spinner("예산 저장 중…"):
@@ -465,11 +471,10 @@ with st.sidebar:
     st.caption(f"로그인: {st.session_state['auth']['username']}")
     if st.button("로그아웃", key="logout", use_container_width=True):
         logout()
-    with st.expander("저장 안내"):
-        st.caption("내 계정의 기록만 표시합니다. 서버 재시작·재배포로 계정과 DB가 사라질 수 있으니 CSV로 별도 보관하세요. 이전 공용 기록은 DB에 보존하며 자동 배정하지 않습니다.")
 page = st.session_state["page"]
 st.title({"홈": "내 용돈 연구소", "기록하기": "지출 기록하기", "기록장": "지출 기록장", "분석": "소비 분석"}[page])
-st.markdown('<div class="subtitle">지출 기록부터 소비 분석까지 · 나만의 용돈 관리</div>', unsafe_allow_html=True)
+if page == "홈":
+    st.markdown('<div class="subtitle">지출 기록부터 소비 분석까지</div>', unsafe_allow_html=True)
 if "flash" in st.session_state:
     st.success(st.session_state.pop("flash"))
 with st.spinner("기록 불러오는 중…"):
@@ -501,15 +506,19 @@ if page == "홈":
         st.caption("최근 4건 · 전체 내역은 기록장에서 확인")
 
 elif page == "기록하기":
+    # Clear only after a successful transaction; errors retain the user's draft.
+    if st.session_state.pop("reset_expense_form", False):
+        for key in ("new_day", "new_item", "new_amount", "new_category", "new_memo"):
+            st.session_state.pop(key, None)
     with st.form("expense_form", clear_on_submit=False):
         c1, c2 = st.columns(2)
         with c1:
-            day = st.date_input("날짜", value=today, max_value=today)
-            item = st.text_input("사용한 곳", placeholder="예: 점심 김밥", max_chars=100)
+            day = st.date_input("날짜", value=today, max_value=today, key="new_day")
+            item = st.text_input("사용한 곳", placeholder="예: 점심 김밥", max_chars=100, key="new_item")
         with c2:
-            amount = st.number_input("금액 (원)", min_value=1, max_value=100000000, value=3000, step=500)
-            category = st.selectbox("종류", CATEGORIES)
-        memo = st.text_input("메모 · 선택", max_chars=500)
+            amount = st.number_input("금액 (원)", min_value=1, max_value=100000000, value=3000, step=500, key="new_amount")
+            category = st.selectbox("종류", CATEGORIES, key="new_category")
+        memo = st.text_input("메모 · 선택", max_chars=500, key="new_memo")
         submitted = st.form_submit_button("저장하기", type="primary", use_container_width=True)
         if submitted:
             if not item.strip():
@@ -518,11 +527,11 @@ elif page == "기록하기":
                 try:
                     with st.spinner("저장 중…"):
                         add_expense(day, item, category, amount, memo)
+                    st.session_state["reset_expense_form"] = True
                     st.session_state["flash"] = f"저장했습니다 · {item.strip()} {money(amount)}"
                     st.rerun()
                 except sqlite3.Error:
                     st.error("저장하지 못했습니다. 입력한 내용은 유지됩니다.")
-    st.caption("저장 후 입력 내용은 유지됩니다. 완료 알림을 확인해 중복 저장을 피하세요.")
 
 elif page == "기록장":
     # One search field, optional filters, direct actions on each record.
@@ -532,11 +541,12 @@ elif page == "기록장":
     .ledger-meta {font-size:13px;color:#64748b;line-height:1.6;overflow-wrap:anywhere;}
     .ledger-price {font-size:18px;font-weight:750;font-variant-numeric:tabular-nums;line-height:1.6;color:#17283b;}
     </style>""", unsafe_allow_html=True)
-    query = st.text_input("기록 검색", placeholder="사용한 곳이나 메모로 검색", label_visibility="collapsed")
+    query = st.text_input("기록 검색", placeholder="사용한 곳이나 메모로 검색", label_visibility="collapsed", key="ledger_query")
     with st.popover("월 · 종류 필터", use_container_width=True):
         months = sorted(pd.to_datetime(df["spent_on"], errors="coerce").dt.strftime("%Y-%m").dropna().unique().tolist(), reverse=True)
-        selected_month = st.selectbox("월", ["전체"] + months)
-        selected_cat = st.selectbox("종류", ["전체"] + CATEGORIES)
+        selected_month = st.selectbox("월", ["전체"] + months, key="ledger_month")
+        selected_cat = st.selectbox("종류", ["전체"] + CATEGORIES, key="ledger_category")
+        st.button("검색·필터 초기화", on_click=reset_ledger_filters, use_container_width=True)
     view = filter_records(df, selected_month, selected_cat, query)
     suffix = " · ".join(v for v in [selected_month if selected_month != "전체" else "", selected_cat if selected_cat != "전체" else ""] if v)
     st.caption(f"{len(view)}건 · {money(view['amount'].sum())}" + (f" · {suffix}" if suffix else ""))
