@@ -68,8 +68,8 @@ def register_user(username, password):
     username = username.strip().lower()
     if not re.fullmatch(r"[a-z0-9_]{3,32}", username):
         raise ValueError("아이디는 영문 소문자·숫자·밑줄로 3~32자 입력하세요.")
-    if not 10 <= len(password) <= 128:
-        raise ValueError("비밀번호는 10~128자로 입력하세요.")
+    if not 5 <= len(password) <= 128:
+        raise ValueError("비밀번호는 5~128자로 입력하세요.")
     salt = secrets.token_hex(16)
     digest = password_digest(password, salt)
     with closing(get_connection()) as conn:
@@ -149,10 +149,10 @@ def login_screen():
         if "auth_notice" in st.session_state:
             st.success(st.session_state.pop("auth_notice"))
         with st.form(f"auth_form_{mode}", clear_on_submit=False):
-            username = st.text_input("아이디", max_chars=32, placeholder="아이디 입력" if mode == "로그인" else "영문 소문자·숫자·밑줄 3~32자")
-            password = st.text_input("비밀번호", type="password", max_chars=128, placeholder="비밀번호 입력" if mode == "로그인" else "10자 이상 · 다른 서비스와 다르게 설정")
+            username = st.text_input("아이디", max_chars=32, placeholder="아이디 입력" if mode == "로그인" else "소문자·숫자·_ 3~32자")
+            password = st.text_input("비밀번호", type="password", max_chars=128, placeholder="비밀번호 입력" if mode == "로그인" else "5자 이상")
             if mode == "회원가입":
-                confirmation = st.text_input("비밀번호 확인", type="password", max_chars=128, placeholder="비밀번호를 한 번 더 입력")
+                confirmation = st.text_input("비밀번호 확인", type="password", max_chars=128, placeholder="비밀번호 다시 입력")
             submitted = st.form_submit_button("로그인" if mode == "로그인" else "계정 만들기", type="primary", use_container_width=True)
         if submitted:
             try:
