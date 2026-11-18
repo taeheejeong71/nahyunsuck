@@ -517,7 +517,7 @@ if invalid_count:
     st.warning(f"날짜가 잘못된 {invalid_count}건은 표시에서 제외했습니다. 원본 기록은 삭제하지 않았습니다.")
 today = date.today()
 current_month = today.strftime("%Y-%m")
-if page in ["홈", "기록장", "분석"]:
+if page in ["홈", "기록장"]:
     earliest = pd.to_datetime(df["spent_on"], errors="coerce").min()
     start = min(pd.Period(earliest, freq="M"), pd.Period(current_month, freq="M") - 12) if pd.notna(earliest) else pd.Period(current_month, freq="M") - 12
     month_options = [str(p) for p in pd.period_range(start, current_month, freq="M")][::-1]
@@ -533,9 +533,7 @@ active_month = st.session_state.get("active_month", current_month)
 month_df = filter_records(df, month=active_month)
 
 if page == "홈":
-    st.subheader(month_name(active_month))
     if active_month == current_month:
-        st.caption(f"{today.month}월 1일 ~ 오늘 {today.day}일 기준")
         budget_panel(current_month, month_df, today)
     else:
         st.caption("마감된 월 · 해당 월 전체 기록 기준")
@@ -598,14 +596,9 @@ elif page == "기록장":
         selected_month = "전체" if all_months else active_month
         selected_cat = st.selectbox("종류", ["전체"] + CATEGORIES, key="ledger_category")
         st.button("검색·필터 초기화", on_click=reset_ledger_filters, use_container_width=True)
-    st.subheader(month_name(selected_month))
     view = filter_records(df, selected_month, selected_cat, query)
-    suffix = " · ".join(v for v in [selected_month if selected_month != "전체" else "", selected_cat if selected_cat != "전체" else ""] if v)
-    st.caption(f"{len(view)}건 · {money(view['amount'].sum())}" + (f" · {suffix}" if suffix else ""))
-    mode_col, danger_col = st.columns(2)
-    selection_mode = mode_col.toggle("여러 건 선택", key="ledger_selection_mode")
-    if danger_col.button("전체삭제", disabled=df.empty, use_container_width=True, help="필터와 관계없이 본인 기록 전체 삭제"):
-        delete_records_dialog()
+    st.markdown(f'<div class="stats" style="grid-template-columns:repeat(2,minmax(0,1fr));margin:8px 0 16px"><div><small>조회된 기록</small><strong>{len(view):,}건</strong></div><div><small>총 지출</small><strong>{money(view["amount"].sum())}</strong></div></div>', unsafe_allow_html=True)
+    selection_mode = st.session_state.get("ledger_selection_mode", False)
     if view.empty:
         st.info("조건에 맞는 기록이 없습니다. 검색어나 필터를 변경해 보세요." if not df.empty else "아직 기록이 없습니다. ‘기록하기’에서 첫 지출을 남겨 보세요.")
     else:
@@ -642,39 +635,18 @@ elif page == "기록장":
             if nxt.button("다음 →", disabled=index == page_count - 1, use_container_width=True):
                 st.session_state["ledger_page"] = index + 1
                 st.rerun()
-        if selection_mode:
-            picked = [int(i) for i in view["id"] if st.session_state.get(f"ledger_pick_{int(i)}", False)]
-            st.caption(f"현재 검색 결과에서 {len(picked)}건 선택 · 페이지를 넘겨도 선택 유지")
-            if st.button(f"선택한 {len(picked)}건 삭제", type="primary", disabled=not picked, use_container_width=True):
-                delete_records_dialog(picked)
+    st.divider()
+    mode_col, danger_col = st.columns(2)
+    mode_col.toggle("여러 건 선택", key="ledger_selection_mode")
+    if danger_col.button("전체삭제", disabled=df.empty, use_container_width=True, help="필터와 관계없이 본인 기록 전체 삭제"):
+        delete_records_dialog()
+    if selection_mode and not view.empty:
+        picked = [int(i) for i in view["id"] if st.session_state.get(f"ledger_pick_{int(i)}", False)]
+        if st.button(f"선택한 {len(picked)}건 삭제", type="primary", disabled=not picked, use_container_width=True):
+            delete_records_dialog(picked)
 
 else:
-    st.subheader(month_name(active_month))
-    analysis_mode = st.radio("분석 항목", ["월별 지출", "종류별 지출", "다음 달 예상"], horizontal=True, label_visibility="collapsed")
     if df.empty:
         st.info("분석할 기록이 없습니다.")
-    elif analysis_mode == "종류별 지출":
-        chart(month_df)
-        with st.popover("금액 표 보기", use_container_width=True):
-            st.dataframe(month_df.groupby("category")["amount"].sum().rename_axis("종류").reset_index(name="금액(원)"), hide_index=True, use_container_width=True, height=230)
-    elif analysis_mode == "월별 지출":
-        st.caption("월별 비교 · 아래 표만 전체 기간 기준입니다.")
-        chart(df, kind="monthly")
-        st.caption("이번 달은 오늘까지의 기록입니다. 기록이 없는 달은 생략합니다.")
     else:
-        monthly = df.assign(month=pd.to_datetime(df["spent_on"]).dt.strftime("%Y-%m")).groupby("month")["amount"].sum()
-        st.caption("예상 지출은 선택 월과 무관하게 이번 달 기준의 다음 달을 계산합니다.")
-        previous = pd.Period(current_month, freq="M") - 1
-        keys = [str(previous - i) for i in range(2, -1, -1)]
-        recent = monthly.reindex(keys).dropna()
-        if recent.empty:
-            st.info("직전 3개월의 기록이 없어 아직 예상할 수 없습니다.")
-        else:
-            prediction = int(round(recent.mean()))
-            st.metric("다음 달 예상 지출", money(prediction))
-            st.caption(f"직전 3개월 중 기록이 있는 {len(recent)}개월 평균입니다. 진행 중인 이번 달은 제외합니다. 기록 누락에 따라 실제와 다를 수 있습니다.")
-            goal = st.number_input("목표 금액 (원) · 저장되지 않는 계산기", min_value=0, max_value=1000000000, value=min(1000000000, int(prediction * .9)), step=1000)
-            if goal < prediction:
-                st.success(f"평균보다 {money(prediction-goal)} 줄이는 목표입니다.")
-            else:
-                st.info("필요한 지출을 고려해 목표를 조정하세요.")
+        chart(df, kind="monthly")
