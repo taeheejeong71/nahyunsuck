@@ -131,42 +131,52 @@ def confirm_logout_dialog():
 
 
 def login_screen():
-    st.markdown('<h1>내 용돈 연구소</h1><div class="subtitle">지출 기록부터 소비 분석까지 · 나만의 용돈 관리</div>', unsafe_allow_html=True)
-    mode = st.radio("시작하기", ["로그인", "회원가입"], horizontal=True, label_visibility="collapsed")
-    if "auth_notice" in st.session_state:
-        st.success(st.session_state.pop("auth_notice"))
-    with st.form("auth_form", clear_on_submit=True):
-        username = st.text_input("아이디", max_chars=32, placeholder="영문 소문자·숫자·밑줄, 3~32자")
-        password = st.text_input("비밀번호", type="password", max_chars=128, placeholder="10자 이상")
-        if mode == "회원가입":
-            confirmation = st.text_input("비밀번호 확인", type="password", max_chars=128)
-        submitted = st.form_submit_button(mode, type="primary", use_container_width=True)
-    if submitted:
-        try:
+    st.markdown("""<style>
+    .st-key-auth_shell {max-width:440px;margin:clamp(8px,5vh,48px) auto 0;padding:28px 26px;background:#FDFDFF;border:1px solid #E2E6F0;border-radius:20px;}
+    .st-key-auth_shell .auth-brand {font-size:26px;font-weight:800;letter-spacing:-1px;color:#17283b;line-height:1.5;margin-bottom:4px;}
+    .st-key-auth_shell .auth-tagline {font-size:14px;color:#64748b;line-height:1.6;margin-bottom:22px;}
+    .st-key-auth_shell [data-testid="stForm"] {padding:12px 0 0;border:0;background:transparent;}
+    .st-key-auth_shell [role="radiogroup"] {display:flex;gap:8px;padding:5px;background:#F2F4F7;border-radius:12px;}
+    .st-key-auth_shell [role="radiogroup"] label {flex:1;justify-content:center;margin:0;padding:10px 12px;border-radius:9px;}
+    .st-key-auth_shell [role="radiogroup"] label:has(input:checked) {background:#FDFDFF;color:#1751D0;box-shadow:0 1px 4px #17283b12;}
+    .st-key-auth_shell [role="radiogroup"] label > div:first-child {display:none;}
+    .st-key-auth_shell [data-testid="stFormSubmitButton"] button {min-height:48px;margin-top:10px;font-weight:700;}
+    @media(max-width:600px) {.st-key-auth_shell {margin:8px auto 0;padding:24px 18px;border-radius:16px;}}
+    </style>""", unsafe_allow_html=True)
+    with st.container(key="auth_shell"):
+        st.markdown('<div class="auth-brand">내 용돈 연구소</div><div class="auth-tagline">기록은 간단하게, 소비는 똑똑하게.</div>', unsafe_allow_html=True)
+        mode = st.radio("접속 방식", ["로그인", "회원가입"], horizontal=True, label_visibility="collapsed", key="auth_mode")
+        if "auth_notice" in st.session_state:
+            st.success(st.session_state.pop("auth_notice"))
+        with st.form(f"auth_form_{mode}", clear_on_submit=False):
+            username = st.text_input("아이디", max_chars=32, placeholder="아이디 입력" if mode == "로그인" else "영문 소문자·숫자·밑줄 3~32자")
+            password = st.text_input("비밀번호", type="password", max_chars=128, placeholder="비밀번호 입력" if mode == "로그인" else "10자 이상 · 다른 서비스와 다르게 설정")
             if mode == "회원가입":
-                if password != confirmation:
-                    st.error("비밀번호가 일치하지 않습니다.")
+                confirmation = st.text_input("비밀번호 확인", type="password", max_chars=128, placeholder="비밀번호를 한 번 더 입력")
+            submitted = st.form_submit_button("로그인" if mode == "로그인" else "계정 만들기", type="primary", use_container_width=True)
+        if submitted:
+            try:
+                if mode == "회원가입":
+                    if password != confirmation:
+                        st.error("비밀번호가 일치하지 않습니다.")
+                    else:
+                        with st.spinner("계정을 안전하게 만드는 중…"):
+                            register_user(username, password)
+                        st.session_state["auth_notice"] = "가입했습니다. 로그인으로 전환해 접속하세요."
+                        st.rerun()
                 else:
-                    with st.spinner("계정을 안전하게 만드는 중…"):
-                        register_user(username, password)
-                    st.session_state["auth_notice"] = "가입했습니다. 로그인으로 전환해 접속하세요."
-                    st.rerun()
-            else:
-                with st.spinner("로그인 확인 중…"):
-                    auth = authenticate(username, password)
-                if auth:
-                    st.session_state["auth"] = auth
-                    st.session_state["page"] = "홈"
-                    st.rerun()
-                else:
-                    st.error("아이디·비밀번호가 올바르지 않거나 잠시 제한되었습니다. 5회 실패하면 5분 후 다시 시도하세요.")
-        except ValueError as exc:
-            st.error(str(exc))
-        except sqlite3.Error:
-            st.error("계정 저장소에 연결하지 못했습니다. 잠시 후 다시 시도하세요.")
-    st.caption("계정별로 기록을 분리합니다. 공용 기기에서는 사용 후 로그아웃하세요.")
-    with st.popover("계정·저장 안내", use_container_width=True):
-        st.caption("계정과 기록은 서버의 SQLite DB에 저장됩니다. 재배포·재시작 등으로 유실될 수 있습니다. 영구 운영에는 외부 DB 연결이 필요합니다. 비밀번호 재설정·이메일 인증은 제공하지 않으므로 다른 서비스와 다른 비밀번호를 사용하세요. 이전 공용 기록은 자동 배정하지 않고 DB에 그대로 보존합니다.")
+                    with st.spinner("로그인 확인 중…"):
+                        auth = authenticate(username, password)
+                    if auth:
+                        st.session_state["auth"] = auth
+                        st.session_state["page"] = "홈"
+                        st.rerun()
+                    else:
+                        st.error("아이디·비밀번호가 올바르지 않거나 잠시 제한되었습니다. 5회 실패하면 5분 후 다시 시도하세요.")
+            except ValueError as exc:
+                st.error(str(exc))
+            except sqlite3.Error:
+                st.error("계정 저장소에 연결하지 못했습니다. 잠시 후 다시 시도하세요.")
 
 
 def load_data():
