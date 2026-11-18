@@ -119,6 +119,17 @@ def logout():
     st.rerun()
 
 
+@st.dialog("로그아웃 확인")
+def confirm_logout_dialog():
+    st.write("정말 로그아웃하시겠습니까?")
+    st.caption("저장한 기록은 유지됩니다.")
+    cancel, confirm = st.columns(2)
+    if cancel.button("취소", key="logout_cancel", use_container_width=True):
+        st.rerun()
+    if confirm.button("로그아웃", key="logout_confirm", type="primary", use_container_width=True):
+        logout()
+
+
 def login_screen():
     st.markdown('<h1>내 용돈 연구소</h1><div class="subtitle">지출 기록부터 소비 분석까지 · 나만의 용돈 관리</div>', unsafe_allow_html=True)
     mode = st.radio("시작하기", ["로그인", "회원가입"], horizontal=True, label_visibility="collapsed")
@@ -154,7 +165,7 @@ def login_screen():
         except sqlite3.Error:
             st.error("계정 저장소에 연결하지 못했습니다. 잠시 후 다시 시도하세요.")
     st.caption("계정별로 기록을 분리합니다. 공용 기기에서는 사용 후 로그아웃하세요.")
-    with st.expander("계정·저장 안내"):
+    with st.popover("계정·저장 안내", use_container_width=True):
         st.caption("계정과 기록은 서버의 SQLite DB에 저장됩니다. 재배포·재시작 등으로 유실될 수 있습니다. 영구 운영에는 외부 DB 연결이 필요합니다. 비밀번호 재설정·이메일 인증은 제공하지 않으므로 다른 서비스와 다른 비밀번호를 사용하세요. 이전 공용 기록은 자동 배정하지 않고 DB에 그대로 보존합니다.")
 
 
@@ -333,7 +344,7 @@ def budget_panel(month, month_frame, today):
             st.caption("이번 달 예산을 모두 사용했습니다.")
     else:
         st.info("이번 달 예산을 설정하면 남은 돈과 하루 사용 가능액을 확인할 수 있습니다.")
-    with st.expander("이번 달 예산 설정 / 변경", expanded=budget is None):
+    with st.popover("이번 달 예산 설정 / 변경", use_container_width=True):
         with st.form(f"budget_form_{current_user_id()}_{month}"):
             amount = st.number_input("월 예산 (원)", min_value=0, max_value=1000000000,
                                      value=budget if budget is not None else 300000, step=10000,
@@ -389,7 +400,7 @@ def chart(frame, kind="category"):
         rows.append(f'<div class="pie-row"><span class="pie-name"><i style="background:{palette.get(row.category, "#9117D0")}"></i>{esc(row.category)}</span><strong>{money(row.amount)}</strong><span>{row.amount/total:.1%}</span></div>')
     st.markdown('<div class="pie-legend">'+''.join(rows)+'</div>', unsafe_allow_html=True)
     if len(totals) > 3:
-        with st.expander("나머지 종류별 금액 보기"):
+        with st.popover("나머지 종류별 금액 보기", use_container_width=True):
             st.dataframe(totals.iloc[2:].rename(columns={"category":"종류", "amount":"금액(원)"}), hide_index=True, use_container_width=True, height=210)
 
 
@@ -470,7 +481,7 @@ with st.sidebar:
             st.rerun()
     st.caption(f"로그인: {st.session_state['auth']['username']}")
     if st.button("로그아웃", key="logout", use_container_width=True):
-        logout()
+        confirm_logout_dialog()
 page = st.session_state["page"]
 st.title({"홈": "내 용돈 연구소", "기록하기": "지출 기록하기", "기록장": "지출 기록장", "분석": "소비 분석"}[page])
 if page == "홈":
@@ -597,7 +608,7 @@ else:
         st.info("분석할 기록이 없습니다.")
     elif analysis_mode == "종류별 지출":
         chart(df)
-        with st.expander("금액 표 보기"):
+        with st.popover("금액 표 보기", use_container_width=True):
             st.dataframe(df.groupby("category")["amount"].sum().rename_axis("종류").reset_index(name="금액(원)"), hide_index=True, use_container_width=True, height=230)
     elif analysis_mode == "월별 지출":
         chart(df, kind="monthly")
