@@ -14,7 +14,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-st.set_page_config(page_title="내 용돈 연구소", page_icon="◈", layout="wide", initial_sidebar_state="auto")
+st.set_page_config(page_title="내 용돈 연구소", page_icon="◈", layout="wide", initial_sidebar_state="expanded")
 DB_PATH = Path(__file__).with_name("expenses.db")
 CATEGORIES = ["식비", "간식", "교통", "쇼핑", "문화·취미", "학용품", "기타"]
 FIELDS = ["id", "spent_on", "item", "category", "amount", "memo"]
@@ -434,6 +434,11 @@ def chart(frame, kind="category"):
 
 st.markdown('''<style>
 .stApp { background:#F7F8FA; color:#1E2433; }
+/* Keep navigation open and remove the collapse/expand affordances. */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] { display:none !important; }
+
 .block-container { max-width:1140px; padding:4.5rem 2rem 1rem; }
 h1,h2,h3 { color:#1E2433; letter-spacing:-.04em; }
 h1 { font-size:28px !important; padding:.15rem 0 .35rem !important; margin:0 0 4px !important; line-height:1.4 !important; overflow:visible !important; }
